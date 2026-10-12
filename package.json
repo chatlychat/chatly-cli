@@ -1,0 +1,54 @@
+{
+  "name": "@chatlychat/cli",
+  "version": "0.1.2",
+  "description": "The Chatly command line — inspect conversations, send replies, read reports and call any API route from a terminal.",
+  "license": "MIT",
+  "homepage": "https://github.com/chatlychat/chatly-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chatlychat/chatly-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chatlychat/chatly-cli/issues"
+  },
+  "keywords": [
+    "chatly",
+    "cli",
+    "live-chat",
+    "support",
+    "customer-messaging"
+  ],
+  "author": "Chatly",
+  "type": "module",
+  "bin": {
+    "chatly": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@chatlychat/sdk-node": "^0.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsx": "4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
