@@ -52,7 +52,8 @@ WORKSPACE
   workspace labels | inboxes | skills
   workspace team-members <team-id>
   channels list | channels get <id>
-  billing usage | billing plans
+  billing usage <event-type>  One meter over a window. --from --to
+  billing plans
 
 RAW
   api <METHOD> <path>         Any route, with auth, idempotency and retries

@@ -386,7 +386,28 @@ export async function billing(chatly: ChatlyClient, args: ParsedArgs): Promise<n
     printJson(await chatly.billing.plans());
     return 0;
   }
-  printJson(await chatly.billing.usage());
+  /*
+   * `eventType` is required by the route, so it is required here. The API
+   * validates it against a closed list and throws before doing anything
+   * else; a bare `chatly billing usage` would have been a guaranteed 400.
+   */
+  const eventType = args.path[2] ?? str(args.flags, 'event-type');
+  if (eventType === undefined) {
+    throw new Error(
+      'Give a meter: `chatly billing usage <event-type>`.\n' +
+        'The route reports one meter over a window, not a summary of everything.',
+    );
+  }
+  const range: { from?: string; to?: string } = {};
+  const from = str(args.flags, 'from');
+  if (from !== undefined) {
+    range.from = from;
+  }
+  const to = str(args.flags, 'to');
+  if (to !== undefined) {
+    range.to = to;
+  }
+  printJson(await chatly.billing.usage(eventType, range));
   return 0;
 }
 
