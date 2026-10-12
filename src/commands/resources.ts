@@ -116,15 +116,14 @@ export async function conversations(chatly: ChatlyClient, args: ParsedArgs): Pro
       }
       return 0;
     }
-    case 'unattended': {
-      const res = await chatly.conversations.unattended();
-      if (json) {
-        printJson(res);
-        return 0;
-      }
-      printTable(itemsOf(res), ['id', 'status', 'channel', 'waitingSince']);
-      return 0;
-    }
+    case 'unattended':
+      // Cursor-paginated, so `--all` works here like any other list.
+      return renderList(
+        args,
+        ['id', 'status', 'channel', 'waitingSince'],
+        (q) => chatly.conversations.unattended(q),
+        () => chatly.conversations.unattendedAll(),
+      );
     default:
       throw new Error(`Unknown: conversations ${sub}`);
   }
@@ -132,7 +131,6 @@ export async function conversations(chatly: ChatlyClient, args: ParsedArgs): Pro
 
 export async function contacts(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const sub = args.path[1] ?? 'list';
-  const json = bool(args.flags, 'json');
   switch (sub) {
     case 'list':
       return renderList(
@@ -169,13 +167,13 @@ export async function contacts(chatly: ChatlyClient, args: ParsedArgs): Promise<
       return 0;
     }
     case 'journey': {
-      const res = await chatly.contacts.journey(need(args, 2, 'a contact id'));
-      if (json) {
-        printJson(res);
-        return 0;
-      }
-      printTable(itemsOf(res), ['type', 'at', 'summary'], 70);
-      return 0;
+      const id = need(args, 2, 'a contact id');
+      return renderList(
+        args,
+        ['type', 'at', 'summary'],
+        (q) => chatly.contacts.journey(id, q),
+        () => chatly.contacts.journeyAll(id),
+      );
     }
     default:
       throw new Error(`Unknown: contacts ${sub}`);
@@ -219,13 +217,14 @@ export async function search(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
   if (query.length === 0) {
     throw new Error('Nothing to search for. `chatly search "refund policy"`.');
   }
-  const res = await chatly.search.query(query);
-  if (bool(args.flags, 'json')) {
-    printJson(res);
-    return 0;
-  }
-  printTable(itemsOf(res), ['kind', 'id', 'title', 'snippet'], 60);
-  return 0;
+  // `--all` walks the cursor; the single page keeps `facets` and `tier`,
+  // which a hits-only view would discard.
+  return renderList(
+    args,
+    ['kind', 'id', 'title', 'snippet'],
+    (q) => chatly.search.query(query, q),
+    () => chatly.search.queryAll(query),
+  );
 }
 
 export async function kb(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
