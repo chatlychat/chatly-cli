@@ -43,7 +43,9 @@ describe('parseArgs', () => {
   });
 
   it('rejects a non-numeric --limit instead of silently passing NaN', () => {
-    expect(() => num(parseArgs(['x', '--limit', 'lots']).flags, 'limit')).toThrow(/expects a number/);
+    expect(() => num(parseArgs(['x', '--limit', 'lots']).flags, 'limit')).toThrow(
+      /expects a number/,
+    );
   });
 
   it('treats a trailing flag with no value as true', () => {
@@ -73,7 +75,6 @@ describe('credential resolution', () => {
 
   it('writes the config 0600, because the key is a workspace-wide bearer token', () => {
     write({ apiKey: 'ck_secret' });
-    // eslint-disable-next-line no-bitwise -- reading the permission bits is the assertion
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(path, 'utf8')).apiKey).toBe('ck_secret');
   });
@@ -81,7 +82,6 @@ describe('credential resolution', () => {
   it('re-chmods an existing file, since writeFileSync mode only applies on create', () => {
     write({ apiKey: 'ck_one' });
     write({ apiKey: 'ck_two' });
-    // eslint-disable-next-line no-bitwise -- as above
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
@@ -148,7 +148,12 @@ describe('run() against a faked socket', () => {
       });
     }) as unknown as typeof fetch;
     return (opts) =>
-      new ChatlyClient({ ...opts, fetchFn, sleepFn: async () => undefined, retry: { attempts: 1 } });
+      new ChatlyClient({
+        ...opts,
+        fetchFn,
+        sleepFn: async () => undefined,
+        retry: { attempts: 1 },
+      });
   }
 
   it('prints the version, not the help, for --version', async () => {
@@ -183,7 +188,10 @@ describe('run() against a faked socket', () => {
     expect(out.join('')).toContain('Ada');
 
     out.length = 0;
-    await run(['contacts', 'list', '--key', 'ck_test', '--json'], factoryFor([{ status: 200, body }]));
+    await run(
+      ['contacts', 'list', '--key', 'ck_test', '--json'],
+      factoryFor([{ status: 200, body }]),
+    );
     expect(JSON.parse(out.join(''))).toEqual({
       items: [{ id: 'c_1', name: 'Ada', email: 'ada@x.test' }],
       nextCursor: null,

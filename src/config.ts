@@ -79,6 +79,9 @@ export function resolveCredentials(
   }
   throw new Error(
     'No API key. Run `chatly login`, set CHATLY_API_KEY, or pass --key.\n' +
-      'Create a key in the dashboard under Settings → API keys.',
+      // The path the sidebar actually renders — `check-nav-instructions.mjs`
+      // compares this string against the real navigation tree, which is how
+      // "Settings → API keys" (wrong on both levels) was caught here.
+      'Create one in the dashboard under Workspace → Integrations → Developer → API keys.',
   );
 }

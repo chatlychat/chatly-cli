@@ -1,7 +1,7 @@
-import type { ChatlyClient } from '@chatlychat/sdk-node';
-
 import { bool, num, str, type ParsedArgs } from '../args.js';
 import { itemsOf, nextCursorOf, printJson, printTable } from '../output.js';
+
+import type { ChatlyClient } from '@chatlychat/sdk-node';
 
 /** Shared list behaviour: one page, or every page with `--all`. */
 async function renderList(
@@ -13,7 +13,9 @@ async function renderList(
   const json = bool(args.flags, 'json');
   if (bool(args.flags, 'all')) {
     if (everyPage === undefined) {
-      process.stderr.write('--all is not available for this command (it is not cursor-paginated).\n');
+      process.stderr.write(
+        '--all is not available for this command (it is not cursor-paginated).\n',
+      );
       return 1;
     }
     const rows: unknown[] = [];
@@ -152,7 +154,9 @@ export async function contacts(chatly: ChatlyClient, args: ParsedArgs): Promise<
           : { externalId: str(args.flags, 'external-id') }),
       };
       if (Object.keys(input).length === 0) {
-        throw new Error('Nothing to upsert. Pass at least one of --email --name --phone --external-id.');
+        throw new Error(
+          'Nothing to upsert. Pass at least one of --email --name --phone --external-id.',
+        );
       }
       printJson(await chatly.contacts.upsert(input));
       return 0;
@@ -442,11 +446,10 @@ export async function api(chatly: ChatlyClient, args: ParsedArgs): Promise<numbe
       query[k.slice(2)] = v;
     }
   }
-  const res = await chatly.request(
-    method as 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
-    path,
-    { query, ...(body === undefined ? {} : { body }) },
-  );
+  const res = await chatly.request(method as 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path, {
+    query,
+    ...(body === undefined ? {} : { body }),
+  });
   printJson(res ?? { ok: true });
   return 0;
 }

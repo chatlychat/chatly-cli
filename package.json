@@ -1,6 +1,6 @@
 {
   "name": "@chatlychat/cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "The Chatly command line — inspect conversations, send replies, read reports and call any API route from a terminal.",
   "license": "MIT",
   "homepage": "https://github.com/chatlychat/chatly-cli#readme",
@@ -35,7 +35,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@chatlychat/sdk-node": "^0.2.1"
+    "@chatlychat/sdk-node": "^0.2.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

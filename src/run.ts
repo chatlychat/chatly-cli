@@ -23,7 +23,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version']);
@@ -58,7 +58,12 @@ export async function run(
     process.stdout.write(`${VERSION}\n`);
     return 0;
   }
-  if (command === undefined || bool(args.flags, 'help') || bool(args.flags, 'h') || command === 'help') {
+  if (
+    command === undefined ||
+    bool(args.flags, 'help') ||
+    bool(args.flags, 'h') ||
+    command === 'help'
+  ) {
     process.stdout.write(HELP);
     return 0;
   }
@@ -152,4 +157,3 @@ export function explain(err: unknown): { code: number; message: string } {
   }
   return { code: 1, message: err instanceof Error ? err.message : String(err) };
 }
-

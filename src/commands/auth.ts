@@ -1,9 +1,9 @@
 import { createInterface } from 'node:readline/promises';
 
+import { str, type ParsedArgs } from '../args.js';
 import { CONFIG_PATH, readConfig, writeConfig } from '../config.js';
-import type { ParsedArgs } from '../args.js';
-import { str } from '../args.js';
 import { printJson } from '../output.js';
+
 import type { ChatlyClient } from '@chatlychat/sdk-node';
 
 /**

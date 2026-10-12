@@ -41,11 +41,12 @@ export function printTable(
   }
   const clip = (s: string): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
   const body = rows.map((r) => columns.map((c) => clip(cell(r, c).replace(/\s+/g, ' '))));
-  const widths = columns.map((c, i) =>
-    Math.max(c.length, ...body.map((r) => (r[i] ?? '').length)),
-  );
+  const widths = columns.map((c, i) => Math.max(c.length, ...body.map((r) => (r[i] ?? '').length)));
   const line = (cells: ReadonlyArray<string>): string =>
-    cells.map((v, i) => v.padEnd(widths[i] ?? 0)).join('  ').trimEnd();
+    cells
+      .map((v, i) => v.padEnd(widths[i] ?? 0))
+      .join('  ')
+      .trimEnd();
 
   process.stdout.write(`${line(columns.map((c) => c.toUpperCase()))}\n`);
   process.stdout.write(`${widths.map((w) => '─'.repeat(w)).join('  ')}\n`);
