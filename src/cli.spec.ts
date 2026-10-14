@@ -15,8 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { bool, num, parseArgs, str } from './args.js';
 import { resolveCredentials, writeConfig, type CliConfig } from './config.js';
+import { HELP } from './help.js';
 import { itemsOf, nextCursorOf } from './output.js';
-import { explain, run } from './run.js';
+import { ALIASES, COMMANDS, explain, run } from './run.js';
 
 describe('parseArgs', () => {
   it('splits the command path from the flags', () => {
@@ -285,5 +286,82 @@ describe('explain()', () => {
     const { ChatlyTransportError } = await import('@chatlychat/sdk-node');
     const { message } = explain(new ChatlyTransportError('request failed: GET /v1/x'));
     expect(message).toContain('never reached Chatly');
+  });
+});
+
+/**
+ * `--help` and `COMMANDS`, checked against each other in both directions.
+ *
+ * `run.ts`'s docblock has always claimed this: "a command with no help entry
+ * is a command nobody finds; a help entry with no command is a promise the
+ * CLI breaks." Nothing enforced it, and fifteen of the twenty-two command
+ * groups had never appeared in `--help` — `ai`, `billing`, `bots`,
+ * `bot-routes`, `brands`, `customer-cards`, `docs-sources`,
+ * `email-templates`, `knowledge-gaps`, `macros`, `triggers` among them. Every
+ * one was implemented, tested and reachable; none was findable.
+ */
+describe('--help covers the command table', () => {
+  /** A command line is two spaces, then the command word. */
+  const helpWords = new Set(
+    HELP.split('\n')
+      .map((line) => /^ {2}(\S+)/.exec(line)?.[1])
+      .filter((w): w is string => w !== undefined),
+  );
+
+  it('reads a plausible number of command words out of the help text', () => {
+    /*
+     * Anti-vacuity, and not a formality: this whole describe block is two
+     * set comparisons, and a regex that stopped matching would make both of
+     * them pass against the empty set. The floor is the number of command
+     * GROUPS, not lines, so adding a subcommand does not move it.
+     */
+    expect(helpWords.size).toBeGreaterThanOrEqual(24);
+  });
+
+  it('documents every command in COMMANDS', () => {
+    const undocumented = Object.keys(COMMANDS).filter((name) => !helpWords.has(name));
+    expect(undocumented, 'these commands exist and `--help` never mentions them').toEqual([]);
+  });
+
+  /**
+   * Words in a command position that are not in `COMMANDS`, by name.
+   *
+   * `chatly` is the USAGE line's own first word. `login` and `logout` are
+   * real commands handled BEFORE a client is built (`run.ts` lists both in
+   * `UNAUTHENTICATED`) — they write and delete the stored key, so there is no
+   * key to authenticate with yet, and they cannot have the
+   * `(client, args)` signature every entry in `COMMANDS` has.
+   *
+   * Listed rather than pattern-matched: a rule like "ignore anything short"
+   * would quietly absolve a future typo, which is the thing this test is for.
+   */
+  const NOT_IN_TABLE = new Set(['chatly', 'login', 'logout']);
+
+  it('documents nothing that is not a command', () => {
+    /*
+     * The other direction. `--help` also carries flags (`--json`), section
+     * headings and continuation lines, so only words that look like a
+     * command are judged: no leading dash, and not a `<placeholder>`.
+     */
+    const promised = [...helpWords].filter(
+      (w) => !w.startsWith('-') && !w.startsWith('<') && !NOT_IN_TABLE.has(w),
+    );
+    const broken = promised.filter((w) => COMMANDS[w] === undefined && ALIASES[w] === undefined);
+    expect(broken, 'these are promised in `--help` and are not commands').toEqual([]);
+  });
+
+  it('every named exception really is reachable, just not through COMMANDS', () => {
+    /*
+     * The exception list is the one place this test can be defeated by
+     * widening, so each entry is held to the reason it was granted: `login`
+     * and `logout` must stay in `run.ts`'s unauthenticated set, and `chatly`
+     * must stay the first word of the USAGE line. An entry added without a
+     * reason fails here.
+     */
+    expect(HELP).toMatch(/^ {2}chatly <command>/m);
+    for (const name of ['login', 'logout']) {
+      expect(COMMANDS[name], `${name} is in COMMANDS now — drop the exception`).toBeUndefined();
+      expect(HELP).toContain(`  ${name}`);
+    }
   });
 });

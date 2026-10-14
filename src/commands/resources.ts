@@ -1,82 +1,17 @@
-import { bool, num, str, type ParsedArgs } from '../args.js';
-import { itemsOf, nextCursorOf, printJson, printTable } from '../output.js';
+/**
+ * The conversational core: threads, people, tickets, search, the KB, events,
+ * workspace reads, and the raw passthrough.
+ *
+ * `renderList`, `need` and `props` moved to `common.ts` when the command
+ * surface grew past what one file could hold under the 650-line ceiling.
+ * Config-as-code lives in `config.ts` and `integrations.ts`, AI in `ai.ts`,
+ * and reports and billing in `insights.ts`.
+ */
+import { bool, str, type ParsedArgs } from '../args.js';
+import { itemsOf, printJson, printTable } from '../output.js';
+import { bodyFrom, need, props, queryFrom, renderList, showObject, showRows } from './common.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
-
-/** Shared list behaviour: one page, or every page with `--all`. */
-async function renderList(
-  args: ParsedArgs,
-  columns: ReadonlyArray<string>,
-  onePage: (query: Record<string, string | number>) => Promise<unknown>,
-  everyPage?: () => AsyncGenerator<unknown, void, void>,
-): Promise<number> {
-  const json = bool(args.flags, 'json');
-  if (bool(args.flags, 'all')) {
-    if (everyPage === undefined) {
-      process.stderr.write(
-        '--all is not available for this command (it is not cursor-paginated).\n',
-      );
-      return 1;
-    }
-    const rows: unknown[] = [];
-    for await (const row of everyPage()) {
-      rows.push(row);
-    }
-    if (json) {
-      printJson(rows);
-    } else {
-      printTable(rows, columns);
-    }
-    return 0;
-  }
-
-  const query: Record<string, string | number> = {};
-  const limit = num(args.flags, 'limit');
-  if (limit !== undefined) {
-    query['limit'] = limit;
-  }
-  const cursor = str(args.flags, 'cursor');
-  if (cursor !== undefined) {
-    query['cursor'] = cursor;
-  }
-  const page = await onePage(query);
-  if (json) {
-    printJson(page);
-    return 0;
-  }
-  printTable(itemsOf(page), columns);
-  const next = nextCursorOf(page);
-  if (next !== null) {
-    process.stdout.write(`next page: --cursor ${next}   (or --all)\n`);
-  }
-  return 0;
-}
-
-/** `--prop key=value`, repeatable, into an object. */
-function props(args: ParsedArgs): Record<string, string> | undefined {
-  const raw = args.flags['prop'];
-  const list = raw === undefined ? [] : Array.isArray(raw) ? raw : [String(raw)];
-  if (list.length === 0) {
-    return undefined;
-  }
-  const out: Record<string, string> = {};
-  for (const pair of list) {
-    const eq = pair.indexOf('=');
-    if (eq <= 0) {
-      throw new Error(`--prop expects key=value, got "${pair}"`);
-    }
-    out[pair.slice(0, eq)] = pair.slice(eq + 1);
-  }
-  return out;
-}
-
-function need(args: ParsedArgs, index: number, what: string): string {
-  const value = args.path[index];
-  if (value === undefined) {
-    throw new Error(`Missing ${what}. See \`chatly --help\`.`);
-  }
-  return value;
-}
 
 export async function conversations(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const sub = args.path[1] ?? 'list';
@@ -123,6 +58,25 @@ export async function conversations(chatly: ChatlyClient, args: ParsedArgs): Pro
         ['id', 'status', 'channel', 'waitingSince'],
         (q) => chatly.conversations.unattended(q),
         () => chatly.conversations.unattendedAll(),
+      );
+    case 'return-to-bot':
+      /*
+       * Hand an open thread back to an assistant, after a human took it.
+       *
+       * `<bot-id>` is required and deliberately not defaulted to whoever
+       * owned it before: a thread three assistants have touched has no
+       * obvious "the" bot, and guessing wrong puts the visitor in front of
+       * the returns agent to ask about a size exchange. `chatly bots list`
+       * has the ids.
+       *
+       * Printed whole rather than as a line, because the answer carries the
+       * bot's NAME — which is what you check to confirm you handed it to the
+       * one you meant.
+       */
+      return showObject(
+        await chatly.conversations.returnToBot(need(args, 2, 'a conversation id'), {
+          botId: need(args, 3, 'a bot id — `chatly bots list` has them'),
+        }),
       );
     default:
       throw new Error(`Unknown: conversations ${sub}`);
@@ -175,6 +129,43 @@ export async function contacts(chatly: ChatlyClient, args: ParsedArgs): Promise<
         () => chatly.contacts.journeyAll(id),
       );
     }
+    case 'mood':
+      /*
+       * Weekly sentiment buckets, `?days`. Answers an EMPTY `buckets` array
+       * when there is not enough signal — which is not the same as a neutral
+       * mood, and the only way to tell is that the array is empty.
+       */
+      return showObject(
+        await chatly.request(
+          'GET',
+          `/v1/contacts/${encodeURIComponent(need(args, 2, 'a contact id'))}/mood`,
+          { query: queryFrom(args, [['days', 'days', true]]) },
+        ),
+      );
+    case 'cards':
+      /*
+       * A READ, despite being a POST.
+       *
+       * `POST /v1/contacts/{id}/cards` fetches this contact's customer cards
+       * LIVE from the operator's own backend — it creates nothing. It is here
+       * because it is the one way to answer "is my card endpoint actually
+       * answering, and with what" without a browser, which is the whole
+       * debugging loop for `chatly customer-cards`.
+       *
+       * The body is `{ conversationId? }`, strict.
+       */
+      return showObject(
+        await chatly.request(
+          'POST',
+          `/v1/contacts/${encodeURIComponent(need(args, 2, 'a contact id'))}/cards`,
+          {
+            body: (() => {
+              const conversationId = str(args.flags, 'conversation-id');
+              return conversationId === undefined ? {} : { conversationId };
+            })(),
+          },
+        ),
+      );
     default:
       throw new Error(`Unknown: contacts ${sub}`);
   }
@@ -207,6 +198,42 @@ export async function tickets(chatly: ChatlyClient, args: ParsedArgs): Promise<n
     case 'queues':
       printJson(await chatly.tickets.queues());
       return 0;
+    case 'conversations':
+      // Every conversation this ticket covers, origin first — how an agent
+      // sees the fifty customers who wrote in about one outage.
+      return showRows(
+        args,
+        await chatly.request(
+          'GET',
+          `/v1/tickets/${encodeURIComponent(need(args, 2, 'a ticket id'))}/conversations`,
+        ),
+        ['id', 'subject', 'status', 'channel'],
+      );
+    case 'status-history':
+      // Oldest first, with time spent in each status. `truncated` is what
+      // distinguishes a capped timeline (500 rows) from a short one.
+      return showObject(
+        await chatly.request(
+          'GET',
+          `/v1/tickets/${encodeURIComponent(need(args, 2, 'a ticket id'))}/status-history`,
+        ),
+      );
+    case 'lineage':
+      // Split and follow-up relationships, both directions of both.
+      return showObject(
+        await chatly.request(
+          'GET',
+          `/v1/tickets/${encodeURIComponent(need(args, 2, 'a ticket id'))}/lineage`,
+        ),
+      );
+    case 'time':
+      // Logged time with a total.
+      return showObject(
+        await chatly.request(
+          'GET',
+          `/v1/tickets/${encodeURIComponent(need(args, 2, 'a ticket id'))}/time`,
+        ),
+      );
     default:
       throw new Error(`Unknown: tickets ${sub}`);
   }
@@ -278,58 +305,6 @@ export async function events(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
   }
 }
 
-export async function webhooks(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
-  const sub = args.path[1] ?? 'deliveries';
-  switch (sub) {
-    case 'deliveries':
-      return renderList(
-        args,
-        ['id', 'event', 'status', 'responseStatus', 'attempts', 'createdAt'],
-        (q) => chatly.webhooks.list(q),
-        () => chatly.webhooks.listAll(),
-      );
-    case 'delivery':
-      printJson(await chatly.webhooks.delivery(need(args, 2, 'a delivery id')));
-      return 0;
-    case 'redeliver': {
-      const id = need(args, 2, 'a delivery id');
-      printJson(await chatly.webhooks.redeliver(id));
-      return 0;
-    }
-    default:
-      throw new Error(`Unknown: webhooks ${sub}`);
-  }
-}
-
-export async function reports(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
-  const sub = args.path[1] ?? 'overview';
-  const range: Record<string, string> = {};
-  const from = str(args.flags, 'from');
-  if (from !== undefined) {
-    range['from'] = from;
-  }
-  const to = str(args.flags, 'to');
-  if (to !== undefined) {
-    range['to'] = to;
-  }
-  switch (sub) {
-    case 'overview':
-      printJson(await chatly.reports.overview(range));
-      return 0;
-    case 'agents':
-      printJson(await chatly.reports.agents(range));
-      return 0;
-    case 'sla':
-      printJson(await chatly.reports.sla(range));
-      return 0;
-    case 'conversations-by-day':
-      printJson(await chatly.reports.conversationsByDay(range));
-      return 0;
-    default:
-      throw new Error(`Unknown: reports ${sub}`);
-  }
-}
-
 export async function workspace(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const sub = args.path[1] ?? 'settings';
   const json = bool(args.flags, 'json');
@@ -363,63 +338,31 @@ export async function workspace(chatly: ChatlyClient, args: ParsedArgs): Promise
     case 'skills':
       printJson(await chatly.workspace.agentSkills());
       return 0;
+    case 'key-scopes':
+      /*
+       * Every scope a key CAN hold, grouped by prefix — static, and the
+       * companion to `chatly whoami`, which lists the ones this key DOES
+       * hold. Together they answer "why did that 403" without reading docs.
+       */
+      return showRows(args, await chatly.request('GET', '/v1/api-keys/scopes'), ['group', 'value']);
     default:
       throw new Error(`Unknown: workspace ${sub}`);
   }
 }
 
-export async function channels(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
-  const sub = args.path[1] ?? 'list';
-  if (sub === 'get') {
-    printJson(await chatly.channels.get(need(args, 2, 'a channel id')));
-    return 0;
-  }
-  const res = await chatly.channels.list();
-  if (bool(args.flags, 'json')) {
-    printJson(res);
-    return 0;
-  }
-  printTable(itemsOf(res), ['id', 'publicId', 'type', 'name', 'status']);
-  return 0;
-}
-
-export async function billing(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
-  const sub = args.path[1] ?? 'usage';
-  if (sub === 'plans') {
-    printJson(await chatly.billing.plans());
-    return 0;
-  }
-  /*
-   * `eventType` is required by the route, so it is required here. The API
-   * validates it against a closed list and throws before doing anything
-   * else; a bare `chatly billing usage` would have been a guaranteed 400.
-   */
-  const eventType = args.path[2] ?? str(args.flags, 'event-type');
-  if (eventType === undefined) {
-    throw new Error(
-      'Give a meter: `chatly billing usage <event-type>`.\n' +
-        'The route reports one meter over a window, not a summary of everything.',
-    );
-  }
-  const range: { from?: string; to?: string } = {};
-  const from = str(args.flags, 'from');
-  if (from !== undefined) {
-    range.from = from;
-  }
-  const to = str(args.flags, 'to');
-  if (to !== undefined) {
-    range.to = to;
-  }
-  printJson(await chatly.billing.usage(eventType, range));
-  return 0;
-}
-
 /**
  * The raw passthrough — `gh api` for Chatly.
  *
- * 85 of the 140 key-accessible routes have no named command here, and adding
- * one for each would be a worse CLI. This keeps every route reachable with
- * the same auth, idempotency key, retry policy and typed errors.
+ * 142 routes are key-accessible and this CLI names a command for the ones a
+ * person runs by hand. The rest — one-off reads that only make sense inside a
+ * larger program, and anything added to the API since this release — stay
+ * reachable here with the same auth, idempotency key, retry policy and typed
+ * errors.
+ *
+ * `--body` takes JSON; `--q-<name> <value>` becomes a query parameter, under
+ * the name you type. Take that name from the handler's zod schema: an object
+ * schema STRIPS a key it does not know, so a misspelling is a 200 that did
+ * something else.
  */
 export async function api(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const method = (args.path[1] ?? 'GET').toUpperCase();
@@ -430,15 +373,14 @@ export async function api(chatly: ChatlyClient, args: ParsedArgs): Promise<numbe
   if (path === undefined || !path.startsWith('/')) {
     throw new Error('Give a path: `chatly api GET /v1/feature-flags`.');
   }
-  const rawBody = str(args.flags, 'body');
-  let body: unknown;
-  if (rawBody !== undefined) {
-    try {
-      body = JSON.parse(rawBody);
-    } catch {
-      throw new Error(`--body is not valid JSON: ${rawBody.slice(0, 60)}`);
-    }
-  }
+  /*
+   * `--file` works here too, for the same reason it works on every config
+   * write: a body big enough to matter does not belong on a command line.
+   */
+  const body =
+    str(args.flags, 'body') === undefined && str(args.flags, 'file') === undefined
+      ? undefined
+      : bodyFrom(args, 'the request body');
   const query: Record<string, string> = {};
   for (const [k, v] of Object.entries(args.flags)) {
     if (k.startsWith('q-') && typeof v === 'string') {
