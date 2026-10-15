@@ -3,7 +3,10 @@
  * a local URL.
  *
  * Two ledgers: webhook subscriptions by default, and one external agent's
- * push deliveries with `--bot <id>` (`listen-bot.ts`). Everything they share
+ * push deliveries with `--bot <id>` (`listen-bot.ts`). And one live mode,
+ * `--relay` (`listen-relay.ts`), for the three synchronous surfaces no ledger
+ * can carry — whose server half is `apps/api/src/modules/relay/`, built against
+ * `RELAY-SERVER-SPEC.md`. Everything the two ledgers share
  * — the flags, the seen-set, the signing and the forward leg — is in
  * `listen-core.ts`, which also records what the minted signature is and is
  * not.
@@ -91,9 +94,10 @@ import {
   type ListenOptions,
   type ListenSummary,
 } from './listen-core.js';
+import { parseRelayOptions, relay, relayOnlyFlagWithoutRelay } from './listen-relay.js';
+import { bool, type ParsedArgs } from '../args.js';
 import { printJson } from '../output.js';
 
-import type { ParsedArgs } from '../args.js';
 import type { ChatlyClient } from '@chatlychat/sdk-node';
 
 export {
@@ -378,7 +382,23 @@ export async function tail(
  * purpose did not fail.
  */
 export async function listen(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
-  const opts = parseListenOptions(args);
+  const relayMode = bool(args.flags, 'relay');
+  if (!relayMode) {
+    /*
+     * `--tool` on a ledger tail would be silently ignored, and the developer
+     * would wait for a tool call that the ledger can never contain.
+     */
+    const stray = relayOnlyFlagWithoutRelay(args);
+    if (stray !== null) {
+      throw new Error(
+        `--${stray} selects a target for --relay, and no ledger records those calls. Did you ` +
+          `mean:\n  chatly listen --relay --${stray} <id> --forward-to http://localhost:3000`,
+      );
+    }
+  }
+  // Parse BEFORE installing signal handlers, so a refusal leaves none behind.
+  const relayOpts = relayMode ? parseRelayOptions(args) : null;
+  const opts = relayMode ? null : parseListenOptions(args);
   const controller = new AbortController();
   const stop = (): void => {
     controller.abort();
@@ -400,6 +420,18 @@ export async function listen(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
   };
 
   try {
+    if (relayOpts !== null) {
+      const r = await relay(chatly, relayOpts, deps);
+      process.stdout.write(
+        `\nDetached (${r.endReason}). ${String(r.frames)} call(s) relayed, ` +
+          `${String(r.answered)} answered by your handler, ${String(r.failed)} not.\n`,
+      );
+      // The server ending a relay the developer did not ask to end is a failure.
+      return r.endReason === 'interrupted' || r.endReason === 'idle' ? 0 : 1;
+    }
+    if (opts === null) {
+      throw new Error('unreachable: neither relay nor ledger options were parsed');
+    }
     const summary =
       opts.botId === null ? await tail(chatly, opts, deps) : await tailBot(chatly, opts, deps);
     process.stdout.write(

@@ -129,8 +129,14 @@ DEVELOPING AGAINST WEBHOOKS AND AGENTS
                               --event <kind>       message | transfer (agent.message too)
                               Forwards the payload itself, with the five
                               x-chatly-* headers a real delivery carries
-                              AI tool calls, customer-card fetches and canvas steps
-                              are synchronous and have no ledger to tail
+  listen --relay              Receive LIVE tool calls, card fetches and canvas steps
+                              on localhost and answer them. Takes PRODUCTION traffic
+                              for the ids named, so they are required:
+                              --tool <id> | --card <id> | --canvas <channelId>
+                              --forward-to <url>   required; each call's path is appended
+                              --secret <s>         or <id>=<s>, repeatable; re-signs
+                              Detaches after 10 minutes idle, or on Ctrl-C. The
+                              dashboard shows a banner for as long as it is attached
 
 WORKSPACE AS CODE
   plan                        Diff chatly.json against the live workspace. Reads only

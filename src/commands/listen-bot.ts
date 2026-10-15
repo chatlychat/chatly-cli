@@ -34,10 +34,11 @@
  * forwarded request carries the same value the real delivery carried, and a
  * handler deduping on it behaves exactly as it will in production.
  *
- * ── The three surfaces still missing ─────────────────────────────────────
+ * ── The three synchronous surfaces ───────────────────────────────────────
  *
  * AI tool calls, customer-card fetches and canvas/step requests are
- * synchronous and have no ledger at all. See `listen.ts`.
+ * synchronous and have no ledger at all. `--relay` (`listen-relay.ts`) is
+ * the answer for those; `RELAY-SERVER-SPEC.md` is its contract.
  */
 import {
   AGENT_SIGN_PLAN,

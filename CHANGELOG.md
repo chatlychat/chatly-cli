@@ -1,6 +1,6 @@
 # @chatlychat/cli — changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-15
 
 ### Added
 
@@ -32,16 +32,35 @@ failed | dead`, because that route answers a **400** on a word outside the
   `verifyChatlySignature` before the request goes out, and a forward whose own
   signature does not verify is refused rather than sent.
 
+- **`chatly listen --relay` — the CLI half of receiving the three
+  SYNCHRONOUS surfaces on localhost**: AI tool calls (`--tool <id>`),
+  customer-card fetches (`--card <id>`) and canvas steps
+  (`--canvas <channelId>`). It attaches a relay session, long-polls for
+  calls, forwards each to `--forward-to` with the call's own path appended,
+  re-signs it with that surface's construction (`t=…,v1=…` over
+  `t.METHOD.path.body` for a tool; `sha256=` over `<ms>.<body>` with
+  `x-chatly-timestamp` for a card and `x-chatly-canvas-ts` for a canvas)
+  plus `x-chatly-signature-v2`, self-checks each with `verifyChatlySignature`,
+  and posts the answer back. Ids are required — there is no form that relays
+  everything, because this takes production traffic — and a call for an id
+  that was not asked for is refused rather than forwarded. It detaches after
+  10 minutes with no call, and on Ctrl-C.
+- `--secret <id>=<secret>` (repeatable) for a relay over several targets with
+  different secrets. `whsec_` and `chsec_` are refused there: they sign other
+  surfaces.
+- `--tool`, `--card` and `--canvas` without `--relay` are refused instead of
+  being silently ignored by a ledger tail.
+
 ### Not done, and why
 
-- **AI tool calls, customer-card fetches and canvas/step requests are still
-  invisible to `listen`.** All three are SYNCHRONOUS — Chatly calls out and
-  waits for the answer inside a visitor's request — so there is no ledger to
-  poll: the response is the point, and a log row would arrive after the
-  visitor had already been told something went wrong. Relaying them needs a
-  server-side surface that holds the inbound request open while a locally
-  connected CLI answers it, which is a route in `apps/api`, not something a
-  poller can fake.
+- **`--relay` has no server yet.** No `/v1/relay-sessions` route exists, so
+  today the attach answers 404 and the command says that the server half has
+  not shipped and nothing was redirected. The protocol — routes, auth,
+  framing, timeouts, the dashboard banner's data source, and teardown when
+  the connection dies — is specified in `RELAY-SERVER-SPEC.md` beside this
+  file. The CLI half is tested against a scripted server under the real SDK
+  transport; that proves what the CLI sends and how it reacts, not that a
+  relay works end to end.
 
 ## 0.2.0 — 2026-10-14
 
