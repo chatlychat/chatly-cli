@@ -1,5 +1,48 @@
 # @chatlychat/cli — changelog
 
+## Unreleased
+
+### Added
+
+- **`chatly listen --bot <id>` — the same thing for an external agent's push
+  deliveries.** It polls `GET /v1/bots/{id}/deliveries` (the ledger behind
+  `chatly bots deliveries`), reads each payload from the per-delivery route,
+  and POSTs it to `--forward-to` with the five `x-chatly-*` headers a real
+  delivery carries — `x-chatly-event: agent.<kind>`, `x-chatly-bot`
+  (`slug ?? id`, as the worker sends it), `x-chatly-attempt`,
+  `x-chatly-delivery-id` and the signature. The payload is forwarded as the
+  whole body, with no `{id,type,payload}` envelope around it, because that is
+  what the external-agent protocol POSTs: wrapping it would make a handler
+  that works against this CLI fail against production.
+- `--secret` now takes the AGENT's `chsec_` secret in `--bot` mode and
+  refuses a `whsec_` one, with the mirror refusal in webhook mode. The two
+  surfaces have different secrets from different routes and neither verifies
+  the other's traffic; crossing them produces a 401 from your own handler
+  that looks exactly like a verifier bug.
+- `--status` is validated in `--bot` mode against `pending | delivered |
+failed | dead`, because that route answers a **400** on a word outside the
+  four rather than an empty page.
+- **Every forward now also carries `x-chatly-signature-v2`** —
+  `t=<unix seconds>,v1=<hex>` over `<t>.<METHOD>.<path>.<rawBody>`, the
+  unified construction from C-02 — beside the surface's legacy header. The
+  platform does not send it on either surface yet, which is the point: a
+  developer can write and test the verifier they will need before the sender
+  moves. `path` is the local `--forward-to` path, because that is the request
+  line the receiver verifies. Both headers are checked with the SDK's own
+  `verifyChatlySignature` before the request goes out, and a forward whose own
+  signature does not verify is refused rather than sent.
+
+### Not done, and why
+
+- **AI tool calls, customer-card fetches and canvas/step requests are still
+  invisible to `listen`.** All three are SYNCHRONOUS — Chatly calls out and
+  waits for the answer inside a visitor's request — so there is no ledger to
+  poll: the response is the point, and a log row would arrive after the
+  visitor had already been told something went wrong. Relaying them needs a
+  server-side surface that holds the inbound request open while a locally
+  connected CLI answers it, which is a route in `apps/api`, not something a
+  poller can fake.
+
 ## 0.2.0 — 2026-10-14
 
 ### Added

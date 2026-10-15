@@ -67,14 +67,41 @@ export async function bots(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
           { body: bodyFrom(args, "the external agent's webhook, timeout or fallback copy") },
         ),
       );
-    case 'rotate-secret':
-      // Shown once, and the old secret stops working the moment this returns.
-      return showObject(
-        await chatly.request(
-          'POST',
-          `/v1/bots/${encodeURIComponent(need(args, 2, 'a bot id'))}/external/rotate-secret`,
-        ),
+    case 'rotate-secret': {
+      /*
+       * Shown once. With no `--activate-at` this sends no body and the old
+       * secret stops signing the moment it returns; with one, the old secret
+       * keeps signing until that instant (at most 168h ahead — the server
+       * checks, against its own clock).
+       *
+       * Through `request`, not `bots.rotateExternalSecret(id, { activateAt })`:
+       * a CLI installed beside an sdk-node that predates the option would
+       * drop the second argument without a word, and the result is the one
+       * thing this flag exists to prevent — a hard cut nobody asked for.
+       */
+      const botId = need(args, 2, 'a bot id');
+      if (args.flags['activate-at'] === true) {
+        throw new Error('--activate-at needs an ISO 8601 instant, e.g. 2026-10-16T09:00:00Z.');
+      }
+      const activateAt = str(args.flags, 'activate-at');
+      const rotated = await chatly.request<{ activatesAt?: unknown } | null>(
+        'POST',
+        `/v1/bots/${encodeURIComponent(botId)}/external/rotate-secret`,
+        activateAt === undefined ? {} : { body: { activateAt } },
       );
+      /*
+       * An instant that has already passed, or an agent with no usable
+       * secret, is a hard cut rather than a 400, and the response is the only
+       * place that says so. Said on stderr so `--json` stays parseable.
+       */
+      if (activateAt !== undefined && rotated?.activatesAt === null) {
+        process.stderr.write(
+          'activatesAt is null: the new secret is ALREADY signing. The instant was not in the ' +
+            'future, or the agent had no usable secret to keep signing with.\n',
+        );
+      }
+      return showObject(rotated);
+    }
 
     /* ── An external agent's delivery ledger ──────────────────────────── */
     case 'deliveries': {

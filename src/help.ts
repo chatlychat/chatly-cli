@@ -76,7 +76,9 @@ BOTS + EXTERNAL AGENTS
   bots create                 --body. type:"external" answers with a secret, ONCE
   bots update <id>            --body
   bots update-external <id>   --body. webhookUrl, timeoutSeconds, fallbackMessage
-  bots rotate-secret <id>     New signing secret, shown once. No overlap window
+  bots rotate-secret <id>     New signing secret, shown once. Hard cut, or
+                              --activate-at <ISO instant> (≤168h) keeps the old
+                              one signing until then
   bots deliveries <id>        The push ledger. --status pending|delivered|failed|dead
   bots delivery <id> <delivery-id>
                               One delivery, with the exact signed payload
@@ -111,16 +113,24 @@ INTEGRATIONS
   channels list | get <id> | adapters | create | update <id>
   channels rotate-secret <id>
 
-DEVELOPING AGAINST WEBHOOKS
+DEVELOPING AGAINST WEBHOOKS AND AGENTS
   listen                      Tail this workspace's webhook deliveries and POST
                               each one to a local URL. Registers nothing
                               --forward-to <url>   where to POST (omit to print only)
                               --secret <whsec_…>   sign the forwarded request
                               --endpoint <id>      one subscription's traffic only
                               --event <name>       repeatable; filters client-side
-                              --status <s>          delivered | failed | dead
+                              --status <s>         pending | delivered | failed | dead
                               --replay <n>         forward the n newest rows first
                               --interval <seconds> poll interval, default 2
+  listen --bot <id>           Tail one external agent's push deliveries instead,
+                              the same ledger as 'bots deliveries'. Same flags, except:
+                              --secret <chsec_…>   the AGENT's secret, not whsec_
+                              --event <kind>       message | transfer (agent.message too)
+                              Forwards the payload itself, with the five
+                              x-chatly-* headers a real delivery carries
+                              AI tool calls, customer-card fetches and canvas steps
+                              are synchronous and have no ledger to tail
 
 WORKSPACE AS CODE
   plan                        Diff chatly.json against the live workspace. Reads only

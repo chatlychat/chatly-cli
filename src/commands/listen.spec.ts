@@ -133,6 +133,7 @@ function harness(
 function options(over: Partial<ListenOptions> = {}): ListenOptions {
   return {
     forwardTo: null,
+    botId: null,
     endpointId: null,
     events: null,
     status: null,
@@ -439,11 +440,58 @@ describe('tail — the forwarded request', () => {
     expect(sent?.headers['x-livechat-timestamp']).toBe(t);
   });
 
+  it('also mints the unified x-chatly-signature-v2, over t.METHOD.path.body', async () => {
+    /*
+     * C-02. The platform sends `x-chatly-signature-v2` on workflow actions
+     * only; minting it here lets a developer write the verifier they will
+     * need on this surface before the sender moves. `path` is the LOCAL
+     * target's path, because that is the request line the receiver verifies.
+     */
+    const { chatly } = oneNew();
+    const h = harness({ maxPolls: 2 });
+    await tail(chatly, options({ forwardTo: FORWARD, secret: SECRET }), h.deps);
+    const sent = h.forwards[0];
+    const header = sent?.headers['x-chatly-signature-v2'] ?? '';
+    /*
+     * The `b=t` base marker, which says WHICH string was signed.
+     *
+     * Without it a receiver reading `b=` is told the unified base is the
+     * body base — because an absent marker means `<t>.<rawBody>`, the
+     * construction every signature minted before the marker existed used.
+     * This command hand-rolled the value until 2026-10-14 and emitted no
+     * marker, so the one tool whose job is to rehearse production taught
+     * the wrong shape.
+     */
+    expect(header.endsWith(',b=t')).toBe(true);
+    const path = new URL(FORWARD).pathname;
+
+    const result = verifyChatlySignature({
+      surface: 'unified_v2',
+      body: sent?.body ?? '',
+      headers: { 'x-chatly-signature-v2': header },
+      secret: SECRET,
+      method: 'POST',
+      path,
+      nowMs: NOW_MS,
+    });
+    expect(result.ok, result.ok ? '' : result.message).toBe(true);
+
+    const t = /t=(\d+)/.exec(header)?.[1] ?? '';
+    expect(/v1=([0-9a-f]+)/.exec(header)?.[1]).toBe(
+      createHmac('sha256', SECRET)
+        .update(`${t}.POST.${path}.${sent?.body ?? ''}`)
+        .digest('hex'),
+    );
+    // Different base, so it must be a different digest from the legacy one.
+    expect(header).not.toBe(sent?.headers['x-livechat-signature']);
+  });
+
   it('does NOT sign when no --secret is given, and warns that verification will fail', async () => {
     const { chatly } = oneNew();
     const h = harness({ maxPolls: 2 });
     await tail(chatly, options({ forwardTo: FORWARD }), h.deps);
     expect(h.forwards[0]?.headers['x-livechat-signature']).toBeUndefined();
+    expect(h.forwards[0]?.headers['x-chatly-signature-v2']).toBeUndefined();
     expect(h.out.join('\n')).toContain('UNSIGNED');
   });
 
