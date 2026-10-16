@@ -1,5 +1,27 @@
 # @chatlychat/cli — changelog
 
+## 0.4.0 — 2026-10-16
+
+Released because the code below was in the repository and not on npm — the
+same drift a customer caught in `@chatlychat/sdk-node`, found here by the gate
+that drift produced.
+
+### Added
+
+- **`chatly listen --relay`** — the server half shipped, so the flag now has
+  something to talk to. It routes an AI tool call, a customer-card fetch or a
+  canvas step for explicitly selected target ids to your terminal and hands
+  your answer back to the caller that is still waiting, which the delivery
+  ledgers cannot do: a copy of the request that arrives after the visitor has
+  been answered is useless.
+- Three rules it will not bend, because they are properties of the protocol
+  rather than of a service: a frame is never signed (the server holds every
+  surface's real secret, and the card and canvas constructions cover
+  `<ts>.<body>` with no path, so a production-valid signature in a frame would
+  be a replayable credential); no operator-configured header leaves the server;
+  and there is no fallback to the configured URL, because falling back would
+  run a side-effecting tool call twice.
+
 ## 0.3.0 — 2026-10-15
 
 ### Added
