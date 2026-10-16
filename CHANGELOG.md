@@ -1,5 +1,19 @@
 # @chatlychat/cli — changelog
 
+## 0.4.1 — 2026-10-16
+
+### Fixed
+
+- **`chatly --version` printed `0.3.0` in 0.4.0.** `run.ts` carries the
+  version as a constant and the 0.4.0 bump missed it, so the one string a user
+  quotes in a bug report was a release behind. The package's own contract test
+  catches this — it reads `package.json` rather than hard-coding the
+  expectation, after an earlier release shipped `0.1.0` while the package was
+  `0.1.2` — and it caught it here too, in the mirror CI, because the local
+  verification run that preceded the release did not include this package.
+  `scripts/check-version-constants.mjs` now checks every such constant against
+  its manifest, so the next one fails before a publish rather than after.
+
 ## 0.4.0 — 2026-10-16
 
 Released because the code below was in the repository and not on npm — the
