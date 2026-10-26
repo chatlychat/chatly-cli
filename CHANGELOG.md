@@ -1,5 +1,43 @@
 # @chatlychat/cli — changelog
 
+## 0.6.0 — 2026-10-26
+
+### Added
+
+- **`chatly secret keypair` and `chatly secret open`** — the half of sealed
+  credential delivery that had never shipped.
+
+  `POST /v1/api-keys` and the other shown-once minters accept
+  `X-Secret-Recipient: x25519:<base64>` and answer with `token: null` plus a
+  `sealedSecret` only the holder of the private key can open. The format is
+  documented down to the byte layout. **Nothing that shipped could open one**
+  — a sweep of all eleven published packages and this CLI found exactly one
+  mention outside the server, a line that PRINTS the blob. So the documented
+  safe path ended in "now implement HKDF-SHA256 over X25519 and
+  ChaCha20-Poly1305 yourself", and the practical advice an integrator got was
+  to paste a live key into a message, which is the thing the mechanism exists
+  to prevent.
+
+  Both subcommands need **no credential**, and that is the point rather than a
+  convenience: the person opening the blob is the integrator, who does not
+  have a key yet because opening it is how they get one. Found by running the
+  built binary — `resolveCredentials` throws before dispatch for everything in
+  `COMMANDS`, so the first real invocation answered "No API key" while every
+  unit test passed.
+
+  `--key-file` is documented ahead of `--key` because a PEM on a command line
+  is in the shell history of whoever ran it.
+
+  The derivation is restated here because `@livechat/shared` is `private: true`
+  and this package is published. `secret.spec.ts` seals with the REAL
+  `sealSecret` and asserts this opens it — a round trip against our own opener
+  would agree with any derivation, including a wrong one. That spec also
+  covers a property the shared module's own docblock says it cannot test: a
+  mutation to the HKDF `info` changes the Diffie-Hellman output too, so one
+  implementation cannot separate the two effects, but two independent ones can.
+  Verified by dropping both public keys from the `info`, which leaves the
+  shared package's 20 specs green and turns 2 of these 6 red.
+
 ## 0.5.4 — 2026-10-26
 
 **Byte-identical to 0.5.3 in behaviour.** Released so the repository and the

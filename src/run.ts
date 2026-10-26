@@ -19,6 +19,7 @@ import * as integrations from './commands/integrations.js';
 import * as listenCmd from './commands/listen.js';
 import * as pac from './commands/platform-as-code.js';
 import * as cmd from './commands/resources.js';
+import * as secretCmd from './commands/secret.js';
 import * as wac from './commands/workspace-as-code.js';
 import { resolveCredentials } from './config.js';
 import { HELP } from './help.js';
@@ -32,10 +33,10 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.5.4';
+const VERSION = '0.6.0';
 
 /** Commands that need no credential. Everything else resolves a key first. */
-const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version']);
+const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
 
 /**
  * Every authenticated command, by the word a person types.
@@ -196,6 +197,15 @@ export async function run(
   }
   if (command === 'logout') {
     return auth.logout();
+  }
+  /*
+   * Sealed delivery's reader half, handled HERE because it needs no
+   * credential — both subcommands are local crypto, and the person running
+   * it is usually the integrator who does not have a key yet. See
+   * `commands/secret.ts`.
+   */
+  if (command === 'secret') {
+    return secretCmd.secret(args);
   }
 
   if (!UNAUTHENTICATED.has(command)) {

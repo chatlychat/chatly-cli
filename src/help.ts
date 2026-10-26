@@ -213,6 +213,13 @@ WORKSPACE
   workspace team-members <team-id>
   workspace key-scopes        What a key may be granted
 
+SEALED DELIVERY
+  secret keypair              An X25519 keypair; send the public half to
+                              whoever mints the credential
+  secret open --sealed <blob> --key-file <path>
+                              Open a sealedSecret locally, so the plaintext
+                              never has to be pasted anywhere
+
 RAW
   api <METHOD> <path>         Any route, with auth, idempotency and retries
                               chatly api GET /v1/feature-flags

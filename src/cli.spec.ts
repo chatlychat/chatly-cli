@@ -391,7 +391,7 @@ describe('--help covers the command table', () => {
    * Listed rather than pattern-matched: a rule like "ignore anything short"
    * would quietly absolve a future typo, which is the thing this test is for.
    */
-  const NOT_IN_TABLE = new Set(['chatly', 'login', 'logout']);
+  const NOT_IN_TABLE = new Set(['chatly', 'login', 'logout', 'secret']);
 
   it('documents nothing that is not a command', () => {
     /*
