@@ -65,12 +65,13 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           NAME=$(node -p "require('./package.json').name")
-          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          # 20 minutes, not 3: core 0.6.0 (2026-10-26) took ~6 minutes to resolve after npm accepted it.
+          for i in $(seq 1 40); do
             if npm view "$NAME@$VERSION" dist.attestations.url --prefer-online | grep -q http; then
               echo "$NAME@$VERSION is live with a provenance attestation"
               exit 0
             fi
-            sleep 15
+            sleep 30
           done
-          echo "::error::$NAME@$VERSION did not appear with an attestation within 3 minutes"
+          echo "::error::$NAME@$VERSION did not appear with an attestation within 20 minutes"
           exit 1
