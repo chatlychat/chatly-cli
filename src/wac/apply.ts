@@ -96,8 +96,36 @@ export interface ApplyOptions {
   readonly writeOnly: boolean;
 }
 
-function fill(path: string, id: string): string {
-  return path.replace('{id}', encodeURIComponent(id));
+/**
+ * Substitute `{id}` and any other placeholder a nested route carries.
+ *
+ * Every workspace-level route has exactly one placeholder and `params` is
+ * empty for all of them. The Platform API's are nested
+ * (`/v1/platform/workspaces/{workspaceId}/users/{id}`), so the parent's id
+ * comes in through `params`.
+ *
+ * **An unfilled placeholder throws.** It is tempting to leave it, since the
+ * server would answer 404 and `apply` reports a failure either way — but the
+ * message would name a path containing a literal `{workspaceId}`, and a 404
+ * reads as "the resource is gone" rather than "this CLI built a broken URL".
+ * Worse, `encodeURIComponent` would not be reached for the braces, so the
+ * request would go out looking almost right. A thrown error is caught by
+ * `execute`'s per-op try and reported against the resource that produced it.
+ */
+function fill(path: string, id: string, params: Readonly<Record<string, string>> = {}): string {
+  let out = path.replace('{id}', encodeURIComponent(id));
+  for (const [name, value] of Object.entries(params)) {
+    out = out.replaceAll(`{${name}}`, encodeURIComponent(value));
+  }
+  const unfilled = /\{([A-Za-z_][A-Za-z0-9_]*)\}/.exec(out);
+  if (unfilled !== null) {
+    throw new Error(
+      `cannot build the request path: ${path} still has {${String(unfilled[1])}} unfilled. ` +
+        'That placeholder is a parent id this plan could not resolve — the reference that ' +
+        'supplies it either failed above or is missing from the document.',
+    );
+  }
+  return out;
 }
 
 /**
@@ -117,23 +145,34 @@ export function writesFor(
     if (!opts.prune || def.remove === null || opts.pruneUnsafe.includes(def.type)) {
       return [];
     }
-    return [{ method: 'DELETE', path: fill(def.remove.path, item.liveId ?? '') }];
+    return [{ method: 'DELETE', path: fill(def.remove.path, item.liveId ?? '', item.pathParams) }];
   }
   if (item.row === undefined || (item.action !== 'create' && item.action !== 'update')) {
     return [];
   }
 
-  /* References: resolved at plan time where possible, here where not. */
-  const wired: Record<string, unknown> = {};
-  for (const [wire, id] of Object.entries(item.resolved)) {
-    wired[wire] = id;
-  }
+  /*
+   * References: resolved at plan time where possible, here where not.
+   *
+   * Two destinations, and keeping them apart is the point. A BODY ref becomes
+   * a field in the request (`botRoutes` sends `botId`); a PATH ref becomes a
+   * segment of the URL and must NOT appear in the body, because
+   * `POST /v1/platform/workspaces/{id}/users` validates with a plain
+   * `z.object` and zod strips a key it has never heard of — a 201 that
+   * silently ignored half the request is the failure CLAUDE.md names twice.
+   */
+  const wired: Record<string, unknown> = { ...item.resolved };
+  const pathWired: Record<string, string> = { ...item.pathParams };
   for (const [wire, ref] of Object.entries(item.row.refs)) {
-    if (wired[wire] === undefined) {
-      const id = refIds.get(`${ref.type}/${ref.key}`);
-      if (id !== undefined) {
-        wired[wire] = id;
+    const id = refIds.get(`${ref.type}/${ref.key}`);
+    if (ref.pathParam === true) {
+      if (pathWired[wire] === undefined && id !== undefined) {
+        pathWired[wire] = id;
       }
+      continue;
+    }
+    if (wired[wire] === undefined && id !== undefined) {
+      wired[wire] = id;
     }
   }
 
@@ -144,7 +183,7 @@ export function writesFor(
     return [
       {
         method: 'POST',
-        path: def.create.path,
+        path: fill(def.create.path, '', pathWired),
         body: { ...item.row.body, ...wired },
       },
     ];
@@ -163,7 +202,7 @@ export function writesFor(
     return [
       {
         method: 'POST',
-        path: def.create.path,
+        path: fill(def.create.path, '', pathWired),
         body: { id: liveId, ...item.row.body, ...wired },
       },
     ];
@@ -205,6 +244,7 @@ export function writesFor(
    * first would make it unreproducible as well, and a flaky request sequence
    * is a thing nobody can debug from a log.
    */
+  const changed = new Map(item.changes.map((c) => [c.name, c.to]));
   const ops: WriteOp[] = [];
   for (const route of def.update) {
     const body: Record<string, unknown> = {};
@@ -212,12 +252,14 @@ export function writesFor(
       if (routeForField(def, field) !== route) {
         continue;
       }
-      body[field] = wired[field] ?? item.row.body[field];
+      // The diff's value for a field wins over the document's: a merge field with
+      // redacted leaves was planned WITHOUT them (unless `--write-only`).
+      body[field] = wired[field] ?? changed.get(field) ?? item.row.body[field];
     }
     if (Object.keys(body).length === 0) {
       continue;
     }
-    ops.push({ method: route.method, path: fill(route.path, liveId), body });
+    ops.push({ method: route.method, path: fill(route.path, liveId, pathWired), body });
   }
   return ops;
 }

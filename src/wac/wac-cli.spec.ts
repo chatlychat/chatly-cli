@@ -26,6 +26,7 @@ import { ChatlyClient } from '@chatlychat/sdk-node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { run } from '../run.js';
+import { isYaml } from './load.js';
 
 interface Seen {
   readonly method: string;
@@ -170,14 +171,21 @@ describe('chatly plan / chatly apply', () => {
 
   it('apply writes the changes, and the request bodies are what the diff said', async () => {
     const seen: Seen[] = [];
+    // Stateful, so the read-back after the writes sees what they did.
+    const live: Record<string, unknown> = { ...LIVE };
     const handler: Handler = (method, path, body) => {
       if (method === 'GET') {
-        return { status: 200, body: LIVE[path] ?? [] };
+        return { status: 200, body: live[path] ?? [] };
       }
       if (path === '/v1/customer-cards') {
+        live[path] = [{ id: 'c9', ...(body as Record<string, unknown>), headers: undefined }];
         // The create answers `{ card, secret }` — the secret BESIDE the card.
         return { status: 201, body: { card: { id: 'c9', key: 'orders' }, secret: 'cc_once' } };
       }
+      live['/v1/bots'] = {
+        items: [{ id: 'bot1', slug: 'support', name: 'Support', ...(body as object) }],
+        nextCursor: null,
+      };
       return { status: 200, body: { id: 'bot1', ...(body as Record<string, unknown>) } };
     };
     const code = await run(
@@ -319,13 +327,16 @@ describe('chatly plan / chatly apply', () => {
       },
     };
     const seen: Seen[] = [];
-    const handler: Handler = (method, p) => {
+    const live: Record<string, unknown> = { '/v1/bots': { items: [], nextCursor: null } };
+    const handler: Handler = (method, p, body) => {
       if (method === 'GET') {
-        return { status: 200, body: p === '/v1/bots' ? { items: [], nextCursor: null } : [] };
+        return { status: 200, body: live[p] ?? [] };
       }
       if (p === '/v1/bots') {
+        live[p] = { items: [{ id: 'bot-minted', ...(body as object) }], nextCursor: null };
         return { status: 201, body: { id: 'bot-minted', slug: 'newbot' } };
       }
+      live[p] = [{ id: 'route-1', ...(body as object) }];
       return { status: 201, body: { id: 'route-1' } };
     };
     expect(
@@ -333,6 +344,75 @@ describe('chatly plan / chatly apply', () => {
     ).toBe(0);
     const routeWrite = seen.find((s) => s.path === '/v1/bot-routes' && s.method === 'POST');
     expect(routeWrite?.body).toEqual({ name: 'checkout', botId: 'bot-minted' });
+  });
+
+  it('apply reads back and exits 1 when the server still differs from the document', async () => {
+    // A route that answers 200 and stores nothing: the status codes are all green.
+    const handler: Handler = (method, p) =>
+      method === 'GET'
+        ? { status: 200, body: LIVE[p] ?? [] }
+        : { status: 200, body: { id: 'bot1' } };
+    const code = await run(
+      ['apply', '--file', file(DOC), '--key', 'ck_t'],
+      factoryFor(handler, []),
+    );
+    expect(code).toBe(1);
+    expect(out.join('')).toContain('still differ from the document');
+    expect(out.join('')).toContain('bots/support');
+  });
+
+  it('manages AI tools by name, keeping write-only secrets out of the diff', async () => {
+    const tool = {
+      name: 'lookup_order',
+      description: 'Find an order',
+      method: 'GET',
+      urlTemplate: 'https://api.acme.test/orders/{{id}}',
+      secretHeaders: { Authorization: 'Bearer ${env:TOOL_TOKEN}' },
+    };
+    const document = { version: 1, resources: { aiTools: [tool] } };
+    const prev = process.env['TOOL_TOKEN'];
+    process.env['TOOL_TOKEN'] = 'tok';
+    try {
+      const seen: Seen[] = [];
+      const live: Record<string, unknown> = {};
+      const handler: Handler = (method, p, body) => {
+        if (method === 'GET') {
+          return { status: 200, body: live[p] ?? [] };
+        }
+        live[p] = [
+          {
+            id: 't1',
+            ...(body as object),
+            secretHeaders: undefined,
+            secretHeaderNames: ['Authorization'],
+          },
+        ];
+        return { status: 201, body: { id: 't1' } };
+      };
+      expect(
+        await run(['apply', '--file', file(document), '--key', 'ck_t'], factoryFor(handler, seen)),
+      ).toBe(0);
+      const post = seen.find((s) => s.method === 'POST');
+      expect(post?.path).toBe('/v1/ai/tools');
+      expect(post?.body).toMatchObject({
+        name: 'lookup_order',
+        secretHeaders: { Authorization: 'Bearer tok' },
+      });
+      // And a second plan is clean: the opaque secret does not read as drift.
+      out.length = 0;
+      expect(
+        await run(
+          ['plan', '--file', file(document), '--key', 'ck_t', '--exit-code'],
+          factoryFor(handler, []),
+        ),
+      ).toBe(0);
+    } finally {
+      if (prev === undefined) {
+        delete process.env['TOOL_TOKEN'];
+      } else {
+        process.env['TOOL_TOKEN'] = prev;
+      }
+    }
   });
 
   /* ══ Refusals ═══════════════════════════════════════════════════════════ */
@@ -357,20 +437,85 @@ describe('chatly plan / chatly apply', () => {
     expect(seen.filter((s) => s.method === 'DELETE').map((s) => s.path)).toEqual(['/v1/brands/b1']);
   });
 
-  it('refuses a YAML document with the conversion, rather than half-parsing it', async () => {
-    const yaml = 'version: 1\nresources:\n  brands:\n    - slug: acme\n';
-    const seen: Seen[] = [];
-    await expect(
-      run(['plan', '--file', file(yaml, 'chatly.yaml'), '--key', 'ck_t'], factoryFor(reads, seen)),
-    ).rejects.toThrow(/looks like YAML/);
-    expect(seen, 'nothing should have been read either').toEqual([]);
+  const YAML_DOC = `version: 1
+resources:
+  brands:
+    - slug: acme
+      name: Acme
+  bots:
+    - slug: support
+      name: Support
+      model: gpt-4o
+  customerCards:
+    - key: orders
+      title: Orders
+      url: https://cards.test/orders
+      ttlSeconds: 120
+`;
+
+  it('the same document as JSON and as YAML gives an identical plan', async () => {
+    await run(['plan', '--file', file(DOC), '--key', 'ck_t', '--json'], factoryFor(reads, []));
+    const asJson = out.join('');
+    out.length = 0;
+    await run(
+      ['plan', '--file', file(YAML_DOC, 'chatly.yaml'), '--key', 'ck_t', '--json'],
+      factoryFor(reads, []),
+    );
+    expect(out.join('')).toBe(asJson);
+    expect(asJson).toContain('acme'); // control: not two empty outputs agreeing
   });
 
-  it('spots YAML behind a .json name, where JSON.parse would misdirect the reader', async () => {
-    const yaml = 'version: 1\nresources: {}\n';
+  it('refuses a duplicate key', async () => {
+    const yaml = 'version: 1\nresources:\n  brands: []\n  brands: []\n';
     await expect(
-      run(['plan', '--file', file(yaml, 'chatly.json'), '--key', 'ck_t'], factoryFor(reads, [])),
-    ).rejects.toThrow(/looks like YAML/);
+      run(['plan', '--file', file(yaml, 'chatly.yml'), '--key', 'ck_t'], factoryFor(reads, [])),
+    ).rejects.toThrow(/not valid YAML \(line 4, column 3\)/);
+  });
+
+  it('refuses a custom tag', async () => {
+    const yaml = 'version: 1\nresources:\n  brands:\n    - slug: !!js/function "x"\n';
+    await expect(
+      run(['plan', '--file', file(yaml, 'chatly.yaml'), '--key', 'ck_t'], factoryFor(reads, [])),
+    ).rejects.toThrow(/not valid YAML/);
+  });
+
+  it('a YAML syntax error names its line and column', async () => {
+    const yaml = 'version: 1\nresources:\n  brands: [unclosed\n';
+    await expect(
+      run(['plan', '--file', file(yaml, 'chatly.yaml'), '--key', 'ck_t'], factoryFor(reads, [])),
+    ).rejects.toThrow(/not valid YAML \(line \d+, column \d+\)/);
+  });
+
+  it('${env:X} survives YAML, set and unset', async () => {
+    const yaml =
+      'version: 1\nresources:\n  brands:\n    - slug: acme\n      name: ${env:ACME_NAME}\n';
+    const p = file(yaml, 'chatly.yaml');
+    delete process.env['ACME_NAME'];
+    await expect(
+      run(['plan', '--file', p, '--key', 'ck_t'], factoryFor(reads, [])),
+    ).rejects.toThrow(/ACME_NAME/);
+    process.env['ACME_NAME'] = 'Acme Inc';
+    try {
+      expect(await run(['plan', '--file', p, '--key', 'ck_t'], factoryFor(reads, []))).toBe(0);
+    } finally {
+      delete process.env['ACME_NAME'];
+    }
+  });
+
+  it('sniffs stdin: a leading { is JSON, anything else YAML; an extension decides otherwise', () => {
+    expect(isYaml('-', '  \n {"version":1}')).toBe(false);
+    expect(isYaml('-', 'version: 1\n')).toBe(true);
+    expect(isYaml('a.json', 'version: 1')).toBe(false);
+    expect(isYaml('a.YML', '{"version":1}')).toBe(true);
+  });
+
+  it('YAML behind a .json name is a JSON error, not guessed at', async () => {
+    await expect(
+      run(
+        ['plan', '--file', file('version: 1\n', 'chatly.json'), '--key', 'ck_t'],
+        factoryFor(reads, []),
+      ),
+    ).rejects.toThrow(/not valid JSON/);
   });
 
   it('refuses the whole document before issuing a single request', async () => {

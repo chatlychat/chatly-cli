@@ -54,3 +54,56 @@ export function isRedacted(value: unknown): boolean {
   }
   return false;
 }
+
+/* ── Merge-written fields ─────────────────────────────────────────────── */
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * The part of a live value a MERGE-written field describes: the keys the
+ * document names, recursively. The server keeps every key the write omits,
+ * so an omitted key is not a difference. Arrays are compared whole — a list
+ * the document names is the list it wants.
+ */
+export function narrowTo(live: unknown, desired: unknown): unknown {
+  if (!isPlainObject(live) || !isPlainObject(desired)) {
+    return live;
+  }
+  return Object.fromEntries(Object.keys(desired).map((k) => [k, narrowTo(live[k], desired[k])]));
+}
+
+/**
+ * A MERGE-written object compared leaf by leaf, so one redacted credential
+ * hides itself and nothing else. `live` and `desired` come back with every
+ * path whose live value is `__redacted__` (or sits inside a redacted array)
+ * removed from BOTH; `redacted` says whether any was. Without this a single
+ * `identityVerification.secret` in a channel's `config` made the whole
+ * `config` unreadable, and drift on its other keys went unreported.
+ */
+export function splitRedacted(
+  live: unknown,
+  desired: unknown,
+): { live: unknown; desired: unknown; redacted: boolean } {
+  if (isPlainObject(live) && isPlainObject(desired)) {
+    const l: Record<string, unknown> = {};
+    const d: Record<string, unknown> = {};
+    let redacted = false;
+    for (const k of Object.keys(desired)) {
+      const r = splitRedacted(live[k], desired[k]);
+      if (r.redacted) {
+        redacted = true;
+      }
+      if (r.live !== SKIP) {
+        l[k] = r.live;
+        d[k] = r.desired;
+      }
+    }
+    return { live: l, desired: d, redacted };
+  }
+  return isRedacted(live)
+    ? { live: SKIP, desired: SKIP, redacted: true }
+    : { live, desired, redacted: false };
+}
+const SKIP = Symbol('redacted');

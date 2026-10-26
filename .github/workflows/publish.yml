@@ -1,0 +1,76 @@
+name: Publish
+
+# Runs when a tag `vX.Y.Z` is pushed to this repository, or by hand from the Actions tab. The tag must equal
+# package.json's version. Publishing needs the trusted publisher registered on npmjs.com for THIS repository,
+# THIS file name (publish.yml) and the `npm` environment.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # the OIDC token npm trades for a one-hour publish credential; no NPM_TOKEN exists
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      # Trusted Publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@^11.5.1
+      - name: The tag, package.json and the registry must agree
+        id: guard
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $VERSION"
+            exit 1
+          fi
+          if npm view "$NAME@$VERSION" version --prefer-online > /dev/null 2>&1; then
+            echo "$NAME@$VERSION is already on the registry; nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.guard.outputs.skip != 'true'
+        run: npm install --no-audit --no-fund
+      - if: steps.guard.outputs.skip != 'true'
+        run: npm run build
+      - if: steps.guard.outputs.skip != 'true'
+        run: npm test
+      - name: Wait for @chatlychat/* dependencies to be installable
+        if: steps.guard.outputs.skip != 'true'
+        # A package published before the sibling it depends on resolves nowhere for a customer.
+        run: |
+          node -e "const p=require('./package.json');for(const f of ['dependencies','peerDependencies'])for(const [n,r] of Object.entries(p[f]||{}))if(n.startsWith('@chatlychat/'))console.log(n+'@'+r)" > siblings.txt
+          while read -r spec; do
+            i=0
+            until [ -n "$(npm view "$spec" version --prefer-online 2>/dev/null)" ]; do
+              i=$((i + 1))
+              if [ "$i" -gt 30 ]; then echo "::error::$spec never became installable"; exit 1; fi
+              echo "waiting for $spec"; sleep 20
+            done
+          done < siblings.txt
+          rm siblings.txt
+      - name: Publish with provenance
+        if: steps.guard.outputs.skip != 'true'
+        run: npm publish --provenance --access public
+      - name: Verify the version resolves and carries an attestation
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if npm view "$NAME@$VERSION" dist.attestations.url --prefer-online | grep -q http; then
+              echo "$NAME@$VERSION is live with a provenance attestation"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::$NAME@$VERSION did not appear with an attestation within 3 minutes"
+          exit 1

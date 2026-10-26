@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline/promises';
 
-import { str, type ParsedArgs } from '../args.js';
-import { CONFIG_PATH, readConfig, writeConfig } from '../config.js';
+import { bool, str, type ParsedArgs } from '../args.js';
+import { CONFIG_PATH, readConfig, resolveCredentials, writeConfig } from '../config.js';
 import { printJson } from '../output.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
@@ -53,7 +53,13 @@ export function logout(): number {
  * turns a mis-scoped key into an obvious error here rather than a 403 from an
  * unrelated endpoint three days into an integration.
  */
-export async function whoami(chatly: ChatlyClient, json: boolean): Promise<number> {
+export async function whoami(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
+  const json = bool(args.flags, 'json');
+  // Resolved the same way run.ts resolved the key this client holds.
+  const key = resolveCredentials(str(args.flags, 'key'), undefined).apiKey;
+  if (key.startsWith('cp_')) {
+    return platformWhoami(chatly, json);
+  }
   const me = await chatly.whoami();
   if (json) {
     printJson(me);
@@ -61,5 +67,50 @@ export async function whoami(chatly: ChatlyClient, json: boolean): Promise<numbe
   }
   process.stdout.write(`workspace  ${me.workspaceId}\n`);
   process.stdout.write(`scopes     ${me.scopes.length === 0 ? '(none)' : me.scopes.join(', ')}\n`);
+  return 0;
+}
+
+interface PlatformWhoami {
+  readonly name: string;
+  readonly prefix: string;
+  readonly scopes: readonly string[];
+  readonly expiresAt: string | null;
+  readonly restrictedToWorkspaceIds: readonly string[] | null;
+  readonly restrictedToSlugPrefix: string | null;
+  readonly loginLinks?: string;
+  readonly contactEmail?: string | null;
+  readonly ipAllowlist?: readonly string[] | null;
+}
+
+/**
+ * A `cp_` platform credential: `GET /v1/platform/whoami`, with the CHT-S01
+ * guardrails an operator set on it. They are shown because a credential can
+ * read but never change them, and "why was my login link refused" or "why
+ * a 403 from CI" is otherwise a support ticket.
+ */
+async function platformWhoami(chatly: ChatlyClient, json: boolean): Promise<number> {
+  const me = await chatly.request<PlatformWhoami>('GET', '/v1/platform/whoami');
+  if (json) {
+    printJson(me);
+    return 0;
+  }
+  const restriction =
+    me.restrictedToWorkspaceIds !== null
+      ? `${String(me.restrictedToWorkspaceIds.length)} workspace(s)`
+      : me.restrictedToSlugPrefix !== null
+        ? `slugs starting "${me.restrictedToSlugPrefix}"`
+        : 'none';
+  const lines: Array<[string, string]> = [
+    ['platform', `${me.name} (${me.prefix}…)`],
+    ['scopes', me.scopes.length === 0 ? '(none)' : me.scopes.join(', ')],
+    ['expires', me.expiresAt ?? 'never'],
+    ['restricted', restriction],
+    ['login links', me.loginLinks ?? 'enabled'],
+    ['ip allow', me.ipAllowlist == null ? 'any address' : me.ipAllowlist.join(', ')],
+    ['contact', me.contactEmail ?? '(none — nobody is warned before expiry)'],
+  ];
+  for (const [label, value] of lines) {
+    process.stdout.write(`${label.padEnd(13)}${value}\n`);
+  }
   return 0;
 }

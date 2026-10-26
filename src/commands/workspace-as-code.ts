@@ -29,42 +29,31 @@
  *
  * ═══ YAML ═════════════════════════════════════════════════════════════════
  *
- * This reads JSON. `yaml` is in the lockfile only as a transitive
- * devDependency of `lint-staged`, which is not reachable from `apps/cli` and
- * would not ship with the published package either way, and CLAUDE.md §2
- * forbids adding a dependency without explicit approval. A hand-rolled YAML
- * subset was considered and rejected: indentation, quoting, anchors and
- * multi-line scalars are exactly the surface where a parser that is 95%
- * right produces a document that means something other than it says, which
- * is worse than one that will not load.
+ * The document may be YAML or JSON; `wac/load.ts` owns the choice and the
+ * strictness, and both commands share it.
  *
- * So a `.yaml` path is refused with the one-line conversion rather than
- * half-parsed, and `--file -` reads stdin, which makes any converter a pipe.
- * The documented filename stays `chatly.yaml` in the integrator's words and
- * `chatly.json` in this implementation; when YAML is approved, `loadDocument`
- * is the only function that changes.
+ * ═══ THE PLATFORM DOCUMENT ════════════════════════════════════════════════
+ *
+ * `chatly platform plan` / `apply` (CHT-F04) is the same engine over the
+ * `/v1/platform/*` surface and a `cp_` credential — `commands/platform-as-code.ts`
+ * and `pac/`. Everything in `wac/` is shared: this file is the workspace's
+ * reader and command wiring, and nothing more.
  */
-import { readFileSync } from 'node:fs';
-
-import { bool, str, type ParsedArgs } from '../args.js';
+import { bool, type ParsedArgs } from '../args.js';
 import { printJson } from '../output.js';
-import {
-  harvestSecrets,
-  renderOutcomes,
-  writesFor,
-  type ApplyOptions,
-  type ApplyOutcome,
-  type FoundSecret,
-} from '../wac/apply.js';
-import { buildPlan, tally, type LiveSection, type Plan } from '../wac/diff.js';
-import { parseDocument, type WacDocument } from '../wac/document.js';
+import { unverified } from './platform-as-code.js';
+import { renderOutcomes, type ApplyOptions } from '../wac/apply.js';
+import { buildPlan, tally, type LiveSection } from '../wac/diff.js';
+import { WORKSPACE_SCHEMA, type WacDocument } from '../wac/document.js';
+import { execute } from '../wac/execute.js';
+import { loadFrom } from '../wac/load.js';
 import { planFooter, planForJson, renderPlan } from '../wac/render.js';
-import { resourceDef, type ResourceDef } from '../wac/resources.js';
+import { resourceDef } from '../wac/resources.js';
 
 import type { ChatlyClient, Page } from '@chatlychat/sdk-node';
 
 /** Looked for in order when `--file` is absent. */
-const DEFAULT_FILES = ['chatly.json', 'chatly.yaml', 'chatly.yml'] as const;
+const DEFAULT_FILES = ['chatly.json', 'chatly.yaml', 'chatly.yml'];
 
 /**
  * The row cap on `/v1/macros`, used to decide whether `--prune` is safe.
@@ -80,64 +69,21 @@ const EXEMPT_LIST_CAP = 200;
 
 /* ── Loading ──────────────────────────────────────────────────────────── */
 
-function readFile(path: string): string {
-  try {
-    // `0` is stdin, so `converter | chatly plan --file -` works.
-    return path === '-' ? readFileSync(0, 'utf8') : readFileSync(path, 'utf8');
-  } catch (err) {
-    throw new Error(`Cannot read ${path}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-function findDefault(): string {
-  for (const candidate of DEFAULT_FILES) {
-    try {
-      readFileSync(candidate, 'utf8');
-      return candidate;
-    } catch {
-      continue;
-    }
-  }
-  throw new Error(
-    'No document found. Looked for chatly.json, chatly.yaml and chatly.yml in this ' +
-      'directory.\nPass one with --file, or --file - to read stdin.\n' +
-      'There is a worked example at https://chatlychat.com/docs/sdk-cli#workspace-as-code',
-  );
-}
-
+/**
+ * The document, read and validated. The loader itself is `wac/load.ts`.
+ *
+ * Re-exported from here because this is where it has always lived and
+ * `chatly platform plan` needs the same loader with a different default
+ * filename — see that file's header for why it is not imported across command
+ * modules.
+ */
 export function loadDocument(args: ParsedArgs, env: NodeJS.ProcessEnv = process.env): WacDocument {
-  const path = str(args.flags, 'file') ?? findDefault();
-  const raw = readFile(path);
-  if (/\.ya?ml$/i.test(path) || /^\s*(?:version|resources)\s*:/m.test(raw)) {
-    /*
-     * Refused, not half-parsed.
-     *
-     * The second half of that test catches a YAML document passed under a
-     * `.json` name or through stdin, which is the shape of the mistake
-     * somebody makes once. A YAML file handed to `JSON.parse` fails with
-     * "Unexpected token v", which sends the reader looking for a syntax error
-     * in their own file rather than at the one sentence they need.
-     */
-    throw new Error(
-      `${path} looks like YAML, and this CLI reads JSON.\n\n` +
-        'YAML needs a parser, and adding a dependency to a published CLI is a decision this\n' +
-        'repo does not make casually (CLAUDE.md §2) — `yaml` is in the monorepo lockfile only\n' +
-        'as a transitive devDependency of lint-staged, so it is not something we already ship.\n' +
-        'A 95%-right hand-rolled YAML subset is worse than no YAML: it loads a document that\n' +
-        'means something other than what it says.\n\n' +
-        'Convert it and pipe it:\n' +
-        `  npx js-yaml ${path} | chatly plan --file -\n` +
-        '  python3 -c "import sys,yaml,json;json.dump(yaml.safe_load(sys.stdin),sys.stdout)" \\\n' +
-        `    < ${path} | chatly plan --file -`,
-    );
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`${path} is not valid JSON: ${err instanceof Error ? err.message : '?'}`);
-  }
-  return parseDocument(parsed, env);
+  return loadFrom(args, env, {
+    defaultFiles: DEFAULT_FILES,
+    schema: WORKSPACE_SCHEMA,
+    docsUrl: 'https://chatlychat.com/docs/sdk-cli#workspace-as-code',
+    command: 'plan',
+  });
 }
 
 /* ── Reading the live workspace ───────────────────────────────────────── */
@@ -245,19 +191,37 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
  * `whoami` is a GET, so this does not spend the no-writes property.
  */
 async function workspaceGuard(chatly: ChatlyClient, doc: WacDocument): Promise<string | undefined> {
-  if (doc.workspace === undefined) {
+  if (doc.guard === undefined) {
     return undefined;
   }
   const me = await chatly.whoami();
-  if (me.workspaceId === doc.workspace) {
+  if (me.workspaceId === doc.guard) {
     return undefined;
   }
   return (
-    `Refusing to run: the document says \`"workspace": "${doc.workspace}"\` and this key ` +
+    `Refusing to run: the document says \`"workspace": "${doc.guard}"\` and this key ` +
     `belongs to ${me.workspaceId}.\n` +
     'Either point --key / CHATLY_API_KEY at the right workspace, or remove the `workspace` ' +
     'line if this document is meant to be portable.'
   );
+}
+
+/** `publicId` is an OUTPUT: read back for each channel the document names, by its `key`. */
+function channelPublicIds(
+  doc: WacDocument,
+  live: ReadonlyMap<string, LiveSection>,
+): Record<string, string> {
+  const wanted = new Set(
+    doc.sections.filter((s) => s.def.type === 'channels').flatMap((s) => s.rows.map((r) => r.key)),
+  );
+  const out: Record<string, string> = {};
+  for (const row of live.get('channels')?.rows ?? []) {
+    const key = row['key'];
+    if (typeof key === 'string' && wanted.has(key) && typeof row['publicId'] === 'string') {
+      out[key] = row['publicId'];
+    }
+  }
+  return out;
 }
 
 /* ── apply ────────────────────────────────────────────────────────────── */
@@ -286,141 +250,39 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
     process.stdout.write('\nApplying…\n\n');
   }
 
-  const outcomes = await execute(chatly, built, opts);
+  const outcomes = await execute(chatly, built, opts, resourceDef);
+  /*
+   * Read-back verification, as `chatly platform apply` does: re-read, re-plan
+   * and require every row to be a noop. Planned WITHOUT `--write-only`, which
+   * would report every opaque field as a change forever.
+   */
+  const liveAfter = await readLive(chatly, doc);
+  const after = buildPlan(doc, liveAfter, { writeOnly: false });
+  const mismatches = unverified(after, opts.prune);
+  const publicIds = channelPublicIds(doc, liveAfter);
   if (bool(args.flags, 'json')) {
-    printJson({ outcomes, warnings: built.warnings });
+    printJson({
+      outcomes,
+      warnings: built.warnings,
+      verified: mismatches.length === 0,
+      mismatches,
+      publicIds,
+    });
   } else {
     process.stdout.write(renderOutcomes(outcomes));
+    for (const [key, publicId] of Object.entries(publicIds)) {
+      process.stdout.write(`channels/${key}: publicId ${publicId}\n`);
+    }
+    process.stdout.write(
+      mismatches.length === 0
+        ? '\nRead back: everything matches the document.\n'
+        : `\nRead back: ${String(mismatches.length)} item(s) still differ from the document:\n` +
+            mismatches.map((m) => `  ${m}\n`).join(''),
+    );
   }
-  return outcomes.some((o) => o.state === 'failed' || o.state === 'skipped') ? 1 : 0;
+  const failed = outcomes.some((o) => o.state === 'failed' || o.state === 'skipped');
+  return failed || mismatches.length > 0 ? 1 : 0;
 }
 
-/**
- * Walk the plan and do it. Continue on failure; never cascade.
- *
- * Exported so `wac.spec.ts` can drive it with a scripted transport and assert
- * on the requests that went over the wire — the shape CLAUDE.md insists on
- * ("assert on the request, not the canned response"), since a fake transport
- * that echoes whatever the caller sent agrees with the bug.
- */
-export async function execute(
-  chatly: ChatlyClient,
-  built: Plan,
-  opts: ApplyOptions,
-): Promise<ReadonlyArray<ApplyOutcome>> {
-  const outcomes: ApplyOutcome[] = [];
-  /** `type/key` → the id a create in THIS run returned. */
-  const refIds = new Map<string, string>();
-  /** `type/key` that failed, so its dependents are skipped not attempted. */
-  const failed = new Set<string>();
-
-  for (const item of built.items) {
-    const def = resourceDef(item.type);
-    if (def === undefined) {
-      continue;
-    }
-    const address = `${item.type}/${item.key}`;
-
-    if (item.action === 'noop') {
-      continue;
-    }
-    if (item.action === 'blocked') {
-      outcomes.push({ ...base(item), state: 'skipped', detail: item.reason, secrets: [] });
-      continue;
-    }
-
-    const blocker = item.dependsOn.find((d) => failed.has(d));
-    if (blocker !== undefined) {
-      outcomes.push({
-        ...base(item),
-        state: 'skipped',
-        detail:
-          `${blocker} failed above, and this names it. Attempting it anyway would produce a ` +
-          'second error about a missing id that points at the wrong thing.',
-        secrets: [],
-      });
-      failed.add(address);
-      continue;
-    }
-
-    const ops = writesFor(def, item, refIds, opts);
-    if (ops.length === 0) {
-      outcomes.push({
-        ...base(item),
-        state: 'kept',
-        detail:
-          item.action === 'orphan'
-            ? opts.prune
-              ? def.remove === null
-                ? (def.removeBlocked ?? 'no DELETE route.')
-                : 'this type cannot be pruned safely on this run (see the warnings)'
-              : '`--prune` would delete it'
-            : undefined,
-        secrets: [],
-      });
-      continue;
-    }
-
-    const secrets: FoundSecret[] = [];
-    let ok = true;
-    for (const op of ops) {
-      try {
-        const response = await chatly.request<unknown>(
-          op.method,
-          op.path,
-          op.body === undefined ? {} : { body: op.body },
-        );
-        secrets.push(...harvestSecrets(def, item, response));
-        const id = idOf(response, def);
-        if (id !== undefined) {
-          refIds.set(address, id);
-        }
-      } catch (err) {
-        ok = false;
-        failed.add(address);
-        outcomes.push({
-          ...base(item),
-          state: 'failed',
-          detail: `${op.method} ${op.path} — ${err instanceof Error ? err.message : String(err)}`,
-          secrets,
-        });
-        break;
-      }
-    }
-    if (ok) {
-      outcomes.push({ ...base(item), state: 'applied', detail: undefined, secrets });
-    }
-  }
-  return outcomes;
-}
-
-function base(item: Plan['items'][number]): Omit<ApplyOutcome, 'state' | 'detail' | 'secrets'> {
-  return { type: item.type, key: item.key, action: item.action };
-}
-
-/**
- * The id out of a write response, for a reference a later section needs.
- *
- * Two levels, because `POST /v1/customer-cards` answers
- * `{ card: { id }, secret }` rather than the card itself — the same envelope
- * quirk that makes the secret sweep two levels deep.
- */
-function idOf(response: unknown, def: ResourceDef): string | undefined {
-  if (typeof response !== 'object' || response === null) {
-    return undefined;
-  }
-  const top = response as Record<string, unknown>;
-  const direct = top[def.idField];
-  if (typeof direct === 'string' && direct.length > 0) {
-    return direct;
-  }
-  for (const value of Object.values(top)) {
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      const nested = (value as Record<string, unknown>)[def.idField];
-      if (typeof nested === 'string' && nested.length > 0) {
-        return nested;
-      }
-    }
-  }
-  return undefined;
-}
+/** Re-exported: it moved to `wac/execute.ts` so `chatly platform apply` shares it. */
+export { execute } from '../wac/execute.js';

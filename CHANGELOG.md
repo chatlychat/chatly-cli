@@ -1,5 +1,94 @@
 # @chatlychat/cli — changelog
 
+## 0.5.2 — 2026-10-26
+
+Not yet published.
+
+### Added
+
+- **YAML documents** — `chatly plan` / `apply` (and `platform plan` / `apply`)
+  read `.yaml` / `.yml` as well as JSON; `--file -` sniffs the content. Parsed
+  strictly (duplicate keys and custom tags are refused, errors carry line and
+  column) and validated exactly as JSON is. New runtime dependency: `yaml`.
+- **`aiTools` in `chatly plan` / `chatly apply`** — AI tools (`/v1/ai/tools`) are
+  a resource, keyed on `name`. `secretHeaders` and `signingSecret` are
+  write-only and never diffed.
+- **`channels` in `chatly plan` / `chatly apply`** — channels are a resource,
+  matched on a new `key` you choose (`^[a-z][a-z0-9-]{0,63}$`, workspace-unique;
+  API: `channels.key`, `GET /v1/channels?key=`). Created when absent, updated
+  when changed, diffed normally so drift shows. `publicId` is an output, printed
+  after `apply`, never an input. Credentials inside `config` (identity
+  verification secrets and the like) are write-only per leaf: not diffed, left
+  alone unless `--write-only`. `--prune` never deletes a channel (no API-key
+  DELETE). `type` is fixed at create. Existing channels have no key: adopt one
+  with the new `chatly channels set-key <id> <key>`.
+- **`chatly apply` reads back** — after its writes it re-reads the workspace and
+  re-plans, exits `1` unless every row matches, and `--json` carries
+  `verified` and `mismatches`. `chatly platform apply` already did this.
+- **`chatly deliveries list | show | replay <event-id> --bot <id>`** — an
+  external agent's delivery log by the `eventId` its endpoint saw; `replay`
+  re-sends the original body under the original id. Same routes as
+  `bots deliveries | delivery | redeliver`.
+
+## 0.5.1 — 2026-10-25
+
+Not yet published. Bumped in the commit that carries the code, so
+`check-unreleased-package-changes` holds; a release is a separate step.
+
+### Added
+
+- **`chatly privacy`** (CHT-X03) — the data-rights executor's five commands.
+  `executor-key` is the one that matters: it mints the credential a privacy
+  platform registers and answers with the executor URL, the workspace id and
+  the secret in one response, because those are the three fields a
+  registration form asks for and they otherwise had to be assembled by hand
+  from three places. The secret is shown ONCE, and the human-readable output
+  says so rather than letting it scroll past; `--json` is exactly the API
+  response. Send `X-Secret-Recipient` to receive it sealed instead.
+
+  The key carries exactly `privacy:execute`, which reaches `/v1/privacy/*`
+  and nothing else in the product — narrower than the
+  `contacts:export` + `contacts:delete` + `contacts:write` an executor needed
+  before, each of which also reaches the full-transcript export, the
+  irreversible erase or contact merge.
+
+  `lookup`, `request`, `status` and `cancel` round out the surface. They are
+  reachable by a privacy platform directly and had no first-party caller at
+  all, so an operator could file a request through a platform and had no way
+  to check on one by hand.
+
+- **`chatly platform plan` / `chatly platform apply`** (CHT-F04) — the Platform
+  API as a file. A `chatly.platform.json` describes workspaces, members,
+  workspace API keys, bot credentials and knowledge sources across several
+  tenants, against a `cp_` platform credential. `plan` reads only, and reads
+  only the tenants the document names. `apply` re-reads afterwards and exits
+  `1` unless every row matches — so a write the server accepted and did not
+  keep fails the run. A `settings` row per tenant plans its business hours,
+  routing and widget-channel config (IDV mode included) against the new
+  `GET`/`POST /v1/platform/workspaces/{id}/settings`; all three are merged by
+  the server, so they are compared only on the keys the document writes.
+  `loginLinks` is refused by name — a link is a mint, not a declaration — and
+  the old top-level `widgetChannel` / `businessHours` / `routing` keys point
+  at `settings`. A whole `cp_` token in the file's `platform.prefix` guard is
+  refused.
+
+- **`chatly init next|remix|astro|express`** (CHT-F02) — scaffolds the
+  widget into an existing project from the web channel's own `embed` block:
+  the identity route (HMAC, or `--identity atlas` for Next and Remix), the launcher or
+  snippet, `chatly.csp.mjs` with a `withChatly()` merge helper, and a
+  privacy-policy table of every key the widget stores. Writes nothing if any
+  target exists (`--force` to overwrite), never edits the project's own files
+  and never writes a secret. No e2e
+  fixture is generated because `@chatlychat/widget-testing` is not on npm.
+
+### Fixed
+
+- **A row of a type with no update route planned as "cannot apply" even when
+  nothing had changed.** `plan` refused before comparing a single field.
+  No workspace-level type was affected (each has an update route or is an
+  upsert); every platform type would have been, so a matching tenant could
+  never print "everything matches".
+
 ## 0.4.1 — 2026-10-16
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "@chatlychat/cli",
-  "version": "0.4.1",
+  "version": "0.5.2",
   "description": "The Chatly command line — inspect conversations, send replies, read reports and call any API route from a terminal.",
   "license": "MIT",
   "homepage": "https://github.com/chatlychat/chatly-cli#readme",
@@ -32,11 +32,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/main.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "echo \"typechecked by build: same tsconfig, see turbo.json\"",
     "test": "vitest run"
   },
   "dependencies": {
-    "@chatlychat/sdk-node": "^0.7.0"
+    "@chatlychat/sdk-node": "^0.7.4",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

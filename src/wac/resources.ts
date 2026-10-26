@@ -30,7 +30,7 @@
  *   triggers        name        NO CONSTRAINT
  *   webhooks        url         NO CONSTRAINT
  *   docsSources     label       NO CONSTRAINT
- *   channels        publicId    UNIQUE — but minted by the server
+ *   channels        key         UNIQUE (workspace_id, key) WHERE NOT NULL — nullable
  *
  * The first five are real: the database refuses a second row, so matching on
  * the key cannot pick the wrong one. The next four are a CONVENTION the
@@ -38,17 +38,15 @@
  * refuses to touch a key that appears twice on either side instead of
  * guessing, which is the only honest thing to do with a key that can repeat.
  *
- * ── The resource with no natural key at all ──────────────────────────────
+ * ── The resource that needed a key added ────────────────────────────────
  *
- * CHANNELS. `publicId` is required on create but it is a RESERVATION, not a
- * name you choose freely: `channels_public_id_unique` is global rather than
- * workspace-scoped, so another tenant may already hold `web`. `type` and
- * `publicId` are both immutable afterwards, `config` reads back with
- * `__redacted__` in every credential key, and the create response carries
- * per-provider webhook registration results that a diff cannot model. A
- * `channels:` section is therefore REFUSED by `document.ts`, by name, with
- * the reason — not half-supported. `chatly channels create|update` is the
- * way, and that is what the refusal says.
+ * CHANNELS. `publicId` is a RESERVATION, not a name: `channels_public_id_unique`
+ * is global, so another tenant may already hold `web`, and the server mints
+ * one when none is sent. Until 2026-10-26 a `channels:` section was refused for
+ * that reason. Migration 0680 added `channels.key`, a workspace-unique name the
+ * author chooses, and the section matches on it. `publicId` stays an OUTPUT
+ * (printed after `apply`); `type` is fixed at create; credentials inside
+ * `config` are write-only per leaf; and `--prune` never deletes one.
  *
  * ═══ VERIFIED AGAINST HANDLERS, NOT AGAINST NAMES ════════════════════════
  *
@@ -519,29 +517,100 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
     ],
   },
   {
+    type: 'aiTools',
+    label: 'AI tool',
+    /*
+     * `name`: `ai_custom_tools_name_unique` is a partial unique index on
+     * (workspace_id, name) WHERE deleted_at IS NULL, so the database enforces
+     * it. `GET /v1/ai/tools` is `@PaginationExempt` — a bare array.
+     */
+    naturalKey: 'name',
+    keySource: 'authored',
+    keyEnforced: true,
+    list: { path: '/v1/ai/tools', paged: false },
+    idField: 'id',
+    create: { path: '/v1/ai/tools' },
+    // PATCH takes the create schema `.partial()`, so every settable field is changeable.
+    update: [{ method: 'PATCH', path: '/v1/ai/tools/{id}' }],
+    // 200 with `{ deleted: true }`.
+    remove: { path: '/v1/ai/tools/{id}' },
+    /*
+     * Both are write-only: the read carries `secretHeaderNames` and
+     * `signingSecretSet` instead of the values.
+     */
+    opaque: ['secretHeaders', 'signingSecret'],
+    secrets: [],
+    unwritable: [...SERVER_OWNED, 'secretHeaderNames', 'signingSecretSet'],
+    project: (row) => ({ ...row, secretHeaders: undefined, signingSecret: undefined }),
+  },
+  {
     type: 'channels',
     label: 'channel',
     /*
-     * Server-owned. See the header: `publicId` is a GLOBALLY unique
-     * reservation rather than a name, `type` and `publicId` are immutable,
-     * `config` reads back redacted, and the create response carries
-     * provider-webhook registration results a diff cannot model. A
-     * `channels:` section is refused by `document.ts`. The row stays here so
-     * the refusal can name the type, the routes and the reason.
+     * `key` (migration 0680): a workspace-unique name the AUTHOR picks,
+     * enforced by a partial unique index. `publicId` cannot be the key — it is
+     * a globally unique reservation the server mints — so it is an OUTPUT:
+     * refused in a document (`unwritable`) and printed after `apply`.
+     * Channels that predate the column have no key and cannot be matched;
+     * `chatly channels set-key <id> <key>` adopts one.
      */
-    naturalKey: 'publicId',
-    keySource: 'server',
+    naturalKey: 'key',
+    keySource: 'authored',
     keyEnforced: true,
+    keyPattern: /^[a-z][a-z0-9-]{0,63}$/,
+    keylessHint:
+      'adopt one with `chatly channels set-key <id> <key>`, or a create here makes a second channel.',
     list: { path: '/v1/channels', paged: false },
     idField: 'id',
-    create: null,
-    update: [{ method: 'PATCH', path: '/v1/channels/{id}' }],
-    // There IS a DELETE, on its own controller — 200 with
-    // `{ deleted, id, type, detachedConversations }`.
-    remove: { path: '/v1/channels/{id}' },
-    opaque: ['config'],
-    secrets: ['secret'],
-    unwritable: [...SERVER_OWNED, 'type', 'publicId', 'originsRestricted', 'embed', 'brandId'],
+    create: { path: '/v1/channels' },
+    /*
+     * No catch-all: `type` is fixed at create, so a changed `type` is reported
+     * as un-appliable instead of sent to a PATCH that strips it. `config` is
+     * merged by the server (RFC 7396), so it is compared on the keys named.
+     */
+    update: [
+      {
+        method: 'PATCH',
+        path: '/v1/channels/{id}',
+        fields: [
+          'name',
+          'enabled',
+          'config',
+          'autoCreateTickets',
+          'autoAcknowledge',
+          'acknowledgeTemplate',
+          'acknowledgeSubject',
+        ],
+      },
+    ],
+    updateBlocked:
+      '`type` is fixed at create. Give the new channel another `key` (the old one then shows ' +
+      'as on the server only) or delete it in the dashboard first.',
+    mergeFields: ['config'],
+    /*
+     * `DELETE /v1/channels/{id}` exists but is not key-accessible, and it
+     * detaches the channel's conversations. Not something `--prune` should do.
+     */
+    remove: null,
+    removeBlocked:
+      'a channel cannot be deleted with an API key, and deleting one detaches its conversations. ' +
+      'Delete it in the dashboard; `--prune` never will.',
+    /*
+     * Credentials live inside `config` and read back as `__redacted__`; they
+     * are split out per leaf in `diff.ts` (write-only, `--write-only` to push).
+     */
+    opaque: [],
+    secrets: [],
+    unwritable: [
+      ...SERVER_OWNED,
+      'publicId',
+      'originsRestricted',
+      'originWarnings',
+      'embed',
+      'brandId',
+      'lastMessageAt',
+      'staleEndpoints',
+    ],
   },
 ];
 

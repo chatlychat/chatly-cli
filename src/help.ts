@@ -31,6 +31,7 @@ AUTH
   login                       Store an API key in ~/.config/chatly/config.json (0600)
   logout                      Remove the stored key
   whoami                      Which workspace this key belongs to, and its scopes
+                              (a cp_ credential: scopes, expiry and guardrails)
 
 CONVERSATIONS
   conversations list          Open conversations, newest first
@@ -85,6 +86,11 @@ BOTS + EXTERNAL AGENTS
   bots redeliver <id> <delivery-id>
                               Queue the recorded payload again, from attempt 0
   bots test-delivery <id>     Sign and POST a rehearsal payload; prints the response
+  deliveries list --bot <id>  An agent's delivery log. --status, --all
+  deliveries show <event-id> --bot <id>
+                              The body (kept 7 days) and what the agent replied
+  deliveries replay <event-id> --bot <id>
+                              Re-send the ORIGINAL body with the original eventId
 
 ROUTING + AUTOMATION
   bot-routes list | fields | create | update <id> | delete <id>
@@ -96,7 +102,7 @@ ROUTING + AUTOMATION
   knowledge-gaps list | triage <id>
 
 INTEGRATIONS
-  webhooks deliveries         --status
+  webhooks deliveries         --status --endpoint --trace <ulid> (X-Chatly-Trace)
   webhooks delivery <id>
   webhooks redeliver <id>
   webhooks endpoints          Subscriptions, not traffic
@@ -111,7 +117,20 @@ INTEGRATIONS
   docs-sources sync <id>      --full re-reads every page
   docs-sources subscribe <id> A refusal is a success: read the response
   channels list | get <id> | adapters | create | update <id>
+  channels set-key <id> <key> Give an existing channel the key chatly.json matches it on
   channels rotate-secret <id>
+  channels brand <id>         --url <brand.json> | --file/--body to apply; neither reads back
+
+DATA RIGHTS
+  privacy executor-key        Mint the credential a privacy platform registers.
+                              Answers with the executor URL, the workspace id
+                              and the secret — shown ONCE. The key carries
+                              exactly privacy:execute and reaches nothing but
+                              /v1/privacy/*
+  privacy lookup              --body <json>  resolve a person to a subjectId
+  privacy request             --body <json>  file one; caseId is the replay key
+  privacy status <id>         Read a request back
+  privacy cancel <id>         Withdraw one that has not run
 
 DEVELOPING AGAINST WEBHOOKS AND AGENTS
   listen                      Tail this workspace's webhook deliveries and POST
@@ -145,6 +164,22 @@ WORKSPACE AS CODE
                               --prune         also delete what the document omits
                               --write-only    also send fields that cannot be read back
                               --exit-code     plan only: exit 2 when there is drift
+  platform plan               The same over /v1/platform/* with a cp_ credential:
+  platform apply              workspaces, users, apiKeys, botCredentials,
+                              knowledgeSources and settings (business hours,
+                              routing, widget channel) across many tenants.
+                              Default file: ./chatly.platform.json. Same flags.
+                              apply re-reads afterwards and exits 1 unless
+                              everything matches the document
+
+INSTALL
+  init next|remix|astro|express
+                              Scaffold the widget into this project for a web channel:
+                              identity route, launcher or snippet, CSP sources
+                              (chatly.csp.mjs) and a privacy table. Never overwrites
+                              --public-id <id>   which web channel (needed if several)
+                              --identity hmac|atlas   default hmac (atlas: next, remix)
+                              --dir <path>   default .   --dry-run   --force
 
 AI
   ai providers | quota

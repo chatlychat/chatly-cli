@@ -58,11 +58,12 @@ describe('parseDocument refuses a key rather than stripping it', () => {
     expect(found.join('\n')).toContain('answer 200 having ignored you');
   });
 
-  it('refuses the resource whose key the server mints, by name and reason', () => {
-    const found = issues(doc({ channels: [{ publicId: 'web', name: 'Site' }] })).join('\n');
-    expect(found).toContain('channels cannot be managed from a document');
-    expect(found).toContain('unique across every workspace');
-    // …and an empty section is fine, so a template file may carry the key.
+  it('refuses a channel that supplies publicId (an output) or has no key', () => {
+    const found = issues(doc({ channels: [{ key: 'web', publicId: 'web', name: 'Site' }] })).join(
+      '\n',
+    );
+    expect(found).toContain('resources.channels[0].publicId');
+    expect(issues(doc({ channels: [{ name: 'Site' }] })).join('\n')).toContain('needs `key`');
     expect(issues(doc({ channels: [] }))).toEqual([]);
   });
 

@@ -56,10 +56,61 @@
  * step. Its blind spot — a workspace with no rows of that type yet — is
  * reported as such rather than passed off as a clean bill. See `diff.ts`.
  */
-import { resourceDef, RESOURCE_TYPES, type ResourceDef } from './resources.js';
+import { keyOf, list } from './document-key.js';
+import { resourceDef, RESOURCE_TYPES } from './resources.js';
+
+import type { ResourceDef } from './resource-def.js';
 
 /** The file format's version. Bumped only for a change that breaks a reader. */
 export const DOCUMENT_VERSION = 1;
+
+/**
+ * Which document this is, as data — so there is one parser and not two.
+ *
+ * `chatly plan` reads a WORKSPACE document against a `ck_` key and `chatly
+ * platform plan` reads a PLATFORM document against a `cp_` credential
+ * (CHT-F04). The two differ in their vocabulary (nine resource types against
+ * five), their guard (a workspace id against a credential prefix) and their
+ * row shape (flat, against rows that name a parent workspace) — and in
+ * nothing else. Every rule in this file's header applies to both verbatim:
+ * refuse an unknown key by name, refuse a field the server returns and no
+ * write accepts, report every issue at once, substitute `${env:…}` and refuse
+ * an unset variable.
+ *
+ * So the alternative was a second copy of ~200 lines of parse logic in
+ * `pac/`, which CLAUDE.md forbids for exactly the reason this surface keeps
+ * demonstrating: a rule fixed in one copy and not the other is two systems
+ * that disagree while both believe they agree.
+ */
+export interface DocumentSchema {
+  /** Accepted at the root. Anything else is refused by name. */
+  readonly topLevelKeys: ReadonlyArray<string>;
+  /** Accepted under `resources`, INCLUDING the keys refused with a reason. */
+  readonly resourceKeys: ReadonlyArray<string>;
+  /** Parsed in this order, which is dependency order. */
+  readonly types: ReadonlyArray<string>;
+  readonly def: (type: string) => ResourceDef | undefined;
+  /**
+   * A resource key that is valid to write and refused to USE, mapped to the
+   * reason. `channels` in the workspace document; `widgetChannel`,
+   * `businessHours`, `routing` and `loginLinks` in the platform one.
+   *
+   * Refused by name rather than dropped from `resourceKeys`, because the
+   * unknown-key message would otherwise say "channels is not a resource
+   * type" — which is wrong, and sends the reader hunting for a spelling
+   * mistake instead of reading the reason.
+   */
+  readonly refusedKeys: Readonly<Record<string, string>>;
+  /**
+   * Validate the optional guard at the root and return its value.
+   *
+   * The guard is what stops a staging document reaching production, and the
+   * two documents guard on different things: a workspace document names a
+   * workspace id, a platform document names its credential's prefix. The
+   * COMMAND compares it against a `whoami` read; this only parses it.
+   */
+  readonly guard: (raw: Record<string, unknown>, issues: Issue[]) => string | undefined;
+}
 
 const TOP_LEVEL_KEYS = ['version', 'workspace', 'resources'] as const;
 
@@ -90,6 +141,13 @@ export interface Issue {
   readonly message: string;
 }
 
+/** One reference a row makes, by the target's natural key. */
+export interface DocumentRef {
+  readonly type: string;
+  readonly key: string;
+  readonly pathParam?: boolean;
+}
+
 export interface DocumentRow {
   /** The natural key's value, as written. */
   readonly key: string;
@@ -97,8 +155,12 @@ export interface DocumentRow {
   readonly path: string;
   /** The row's API fields, with the CLI's own control keys removed. */
   readonly body: Readonly<Record<string, unknown>>;
-  /** `{ botId: { type: 'bots', key: 'support' } }` — resolved by `diff.ts`. */
-  readonly refs: Readonly<Record<string, { readonly type: string; readonly key: string }>>;
+  /**
+   * `{ botId: { type: 'bots', key: 'support' } }` — resolved by `diff.ts`.
+   * `pathParam` is copied from the definition's `ResourceRef`: the id fills a
+   * route placeholder rather than a body field (CHT-F04's nested routes).
+   */
+  readonly refs: Readonly<Record<string, DocumentRef>>;
   /**
    * Top-level fields whose value came, wholly or partly, from `${env:…}`.
    * Rendered as the variable's name rather than its value, so a plan can be
@@ -114,8 +176,12 @@ export interface DocumentSection {
 
 export interface WacDocument {
   readonly version: number;
-  /** Optional guard: `apply` refuses a workspace that is not this one. */
-  readonly workspace: string | undefined;
+  /**
+   * The optional guard value, as the schema defines it: a workspace id for a
+   * workspace document, a credential prefix for a platform one. `apply`
+   * refuses to run when it does not match what the credential reports.
+   */
+  readonly guard: string | undefined;
   /** In `RESOURCES` order — which is dependency order. */
   readonly sections: ReadonlyArray<DocumentSection>;
 }
@@ -136,14 +202,6 @@ export class DocumentError extends Error {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** `a`, `b` and `c` — these go in error messages, so they read as English. */
-function list(names: ReadonlyArray<string>): string {
-  if (names.length <= 1) {
-    return names[0] ?? '(none)';
-  }
-  return `${names.slice(0, -1).join(', ')} and ${String(names[names.length - 1])}`;
 }
 
 /**
@@ -237,6 +295,39 @@ function interpolate(
 }
 
 /**
+ * The workspace document: `chatly.json`, nine resource types, a `ck_` key.
+ *
+ * A resource whose `keySource` is `'server'` is refused by name (none is, now
+ * that channels match on `key`); that refusal is driven by the definition and the message is
+ * assembled from the definition's own route and key names, which is richer
+ * than a constant string could be. Leaving it where it is also keeps this
+ * schema's behaviour byte-identical to what it was before the schema existed.
+ */
+export const WORKSPACE_SCHEMA: DocumentSchema = {
+  topLevelKeys: [...TOP_LEVEL_KEYS],
+  resourceKeys: RESOURCE_TYPES,
+  types: RESOURCE_TYPES,
+  def: resourceDef,
+  refusedKeys: {},
+  guard: (raw, issues) => {
+    const value = raw['workspace'];
+    if (value === undefined) {
+      return undefined;
+    }
+    if (typeof value !== 'string' || value.length === 0) {
+      issues.push({
+        path: 'workspace',
+        message:
+          'must be a workspace id string, or left out. It is a guard: `apply` refuses to run ' +
+          'against any other workspace, which is what stops a staging file reaching production.',
+      });
+      return undefined;
+    }
+    return value;
+  },
+};
+
+/**
  * Parse and validate. Throws `DocumentError` with every problem it found.
  *
  * Nothing here touches the network. `env` is the only ambient input and it is
@@ -246,6 +337,7 @@ function interpolate(
 export function parseDocument(
   raw: unknown,
   env: Readonly<Record<string, string | undefined>> = {},
+  schema: DocumentSchema = WORKSPACE_SCHEMA,
 ): WacDocument {
   const issues: Issue[] = [];
 
@@ -260,7 +352,7 @@ export function parseDocument(
     ]);
   }
 
-  refuseUnknown(issues, '(root)', Object.keys(raw), [...TOP_LEVEL_KEYS], 'top-level key');
+  refuseUnknown(issues, '(root)', Object.keys(raw), schema.topLevelKeys, 'top-level key');
 
   const version = raw['version'];
   if (version === undefined) {
@@ -277,32 +369,39 @@ export function parseDocument(
     });
   }
 
-  const workspaceRaw = raw['workspace'];
-  let workspace: string | undefined;
-  if (workspaceRaw !== undefined) {
-    if (typeof workspaceRaw !== 'string' || workspaceRaw.length === 0) {
-      issues.push({
-        path: 'workspace',
-        message:
-          'must be a workspace id string, or left out. It is a guard: `apply` refuses to run ' +
-          'against any other workspace, which is what stops a staging file reaching production.',
-      });
-    } else {
-      workspace = workspaceRaw;
-    }
-  }
+  const guard = schema.guard(raw, issues);
 
   const resourcesRaw = raw['resources'];
   const sections: DocumentSection[] = [];
   if (resourcesRaw === undefined) {
     issues.push({
       path: 'resources',
-      message: `required. An object keyed by resource type: ${list(RESOURCE_TYPES)}.`,
+      message: `required. An object keyed by resource type: ${list(schema.types)}.`,
     });
   } else if (!isPlainObject(resourcesRaw)) {
     issues.push({ path: 'resources', message: 'must be an object keyed by resource type.' });
   } else {
-    refuseUnknown(issues, 'resources', Object.keys(resourcesRaw), RESOURCE_TYPES, 'resource type');
+    refuseUnknown(
+      issues,
+      'resources',
+      Object.keys(resourcesRaw),
+      schema.resourceKeys,
+      'resource type',
+    );
+    /*
+     * A key that is spelled right and cannot be used, refused with the
+     * reason. An EMPTY array is allowed through, as the `channels` refusal
+     * allows one: a document that carries the key with nothing in it is
+     * describing nothing, and failing on it would make a generated file that
+     * emits every key impossible to apply.
+     */
+    for (const [key, reason] of Object.entries(schema.refusedKeys)) {
+      const value = resourcesRaw[key];
+      if (value === undefined || (Array.isArray(value) && value.length === 0)) {
+        continue;
+      }
+      issues.push({ path: `resources.${key}`, message: reason });
+    }
     /*
      * Iterated in RESOURCES order, not in the file's key order.
      *
@@ -310,12 +409,12 @@ export function parseDocument(
      * run may be about to create — and taking it from the file would make the
      * result depend on how somebody chose to lay out their document.
      */
-    for (const type of RESOURCE_TYPES) {
+    for (const type of schema.types) {
       const value = resourcesRaw[type];
       if (value === undefined) {
         continue;
       }
-      const def = resourceDef(type);
+      const def = schema.def(type);
       if (def === undefined) {
         continue;
       }
@@ -326,7 +425,7 @@ export function parseDocument(
   if (issues.length > 0) {
     throw new DocumentError(issues);
   }
-  return { version: DOCUMENT_VERSION, workspace, sections };
+  return { version: DOCUMENT_VERSION, guard, sections };
 }
 
 function parseSection(
@@ -389,24 +488,8 @@ function parseSection(
       continue;
     }
 
-    const keyValue = row[def.naturalKey];
-    if (typeof keyValue !== 'string' || keyValue.length === 0) {
-      /*
-       * The one field this file insists on, and the message says why rather
-       * than just "required": somebody reading it on a fresh checkout needs
-       * to know that the uuid they were about to paste is the wrong answer.
-       */
-      issues.push({
-        path: `${path}.${def.naturalKey}`,
-        message:
-          `every ${def.label} needs \`${def.naturalKey}\`: a non-empty string. It is the ` +
-          'natural key this file matches on, so `plan` can tell a create from an update ' +
-          'without a server uuid — which does not exist yet in a new environment.' +
-          (def.keyEnforced
-            ? ''
-            : ` Note the database does NOT make \`${def.naturalKey}\` unique for this ` +
-              'resource, so this file is the only thing keeping it unique.'),
-      });
+    const keyValue = keyOf(issues, def, row, path);
+    if (keyValue === undefined) {
       continue;
     }
 
@@ -450,7 +533,7 @@ function parseSection(
     const missing = new Set<string>();
     const usedEnv = new Set<string>();
     const body: Record<string, unknown> = {};
-    const refs: Record<string, { type: string; key: string }> = {};
+    const refs: Record<string, DocumentRef> = {};
     const fromEnv: string[] = [];
 
     for (const [field, rawValue] of Object.entries(row)) {
@@ -501,7 +584,10 @@ function parseSection(
         });
         continue;
       }
-      refs[ref.wire] = { type: ref.type, key: rawValue };
+      refs[ref.wire] =
+        ref.pathParam === true
+          ? { type: ref.type, key: rawValue, pathParam: true }
+          : { type: ref.type, key: rawValue };
     }
 
     for (const name of missing) {

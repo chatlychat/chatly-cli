@@ -74,17 +74,47 @@ describe('credential resolution', () => {
     expect(resolveCredentials(undefined, undefined, {}, path).apiKey).toBe('ck_file');
   });
 
-  it('writes the config 0600, because the key is a workspace-wide bearer token', () => {
+  /*
+   * The MODE assertions are skipped on Windows, and only the mode ones.
+   *
+   * Windows has no POSIX permission bits: `chmod` is a no-op and `statSync`
+   * reports 0o666 whatever the file was created with, so these two failed on
+   * the Windows build desk with `expected 438 to be 384` — 0o666 against
+   * 0o600. That is the platform, not the code.
+   *
+   * Skipped rather than relaxed, which is the whole point: a workspace-wide
+   * bearer token in a world-readable file is a real defect on the platforms
+   * this ships to (Linux in production, macOS in development), and weakening
+   * the assertion to satisfy a build box would delete the check everywhere.
+   * vitest reports these as SKIPPED rather than passed, so the gap is visible
+   * in the summary line instead of being a green tick that proves nothing.
+   *
+   * Note the WRITE is still asserted on every platform below — only the
+   * permission bits are conditional.
+   */
+  const posixModes = process.platform !== 'win32';
+
+  it.skipIf(!posixModes)(
+    'writes the config 0600, because the key is a workspace-wide bearer token',
+    () => {
+      write({ apiKey: 'ck_secret' });
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it('writes the key back, on every platform', () => {
     write({ apiKey: 'ck_secret' });
-    expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(path, 'utf8')).apiKey).toBe('ck_secret');
   });
 
-  it('re-chmods an existing file, since writeFileSync mode only applies on create', () => {
-    write({ apiKey: 'ck_one' });
-    write({ apiKey: 'ck_two' });
-    expect(statSync(path).mode & 0o777).toBe(0o600);
-  });
+  it.skipIf(!posixModes)(
+    're-chmods an existing file, since writeFileSync mode only applies on create',
+    () => {
+      write({ apiKey: 'ck_one' });
+      write({ apiKey: 'ck_two' });
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it('says what to do when there is no key at all', () => {
     expect(() => resolveCredentials(undefined, undefined, {}, path)).toThrow(/chatly login/);
@@ -180,6 +210,32 @@ describe('run() against a faked socket', () => {
     expect(code).toBe(0);
     expect(out.join('')).toContain('ws_1');
     expect(out.join('')).toContain('contacts:read');
+  });
+
+  it('whoami with a cp_ key reads /v1/platform/whoami and prints its guardrails', async () => {
+    const seen: Array<{ url: string; method: string }> = [];
+    const body = JSON.stringify({
+      name: 'Referalli',
+      prefix: 'cp_live_ab',
+      scopes: ['platform:workspaces:read'],
+      expiresAt: null,
+      restrictedToWorkspaceIds: null,
+      restrictedToSlugPrefix: 'referalli-',
+      loginLinks: 'admins-only',
+      contactEmail: null,
+      ipAllowlist: ['203.0.113.0/24'],
+    });
+    const code = await run(
+      ['whoami', '--key', 'cp_live_ab_secret'],
+      factoryFor([{ status: 200, body }], seen),
+    );
+    expect(code).toBe(0);
+    expect(seen.map((s) => new URL(s.url).pathname)).toEqual(['/v1/platform/whoami']);
+    const text = out.join('');
+    expect(text).toContain('login links  admins-only');
+    expect(text).toContain('ip allow     203.0.113.0/24');
+    expect(text).toContain('slugs starting "referalli-"');
+    expect(text).toContain('nobody is warned before expiry');
   });
 
   it('renders a list as a table, and the raw envelope with --json', async () => {

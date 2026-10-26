@@ -233,8 +233,9 @@ describe('the resource table itself', () => {
     }
   });
 
-  it('keeps exactly one resource out of reach, and it is channels', () => {
+  it('has no server-keyed resource left: channels match on the authored `key`', () => {
     const serverKeyed = RESOURCE_TYPES.filter((t) => def(t).keySource === 'server');
-    expect(serverKeyed).toEqual(['channels']);
+    expect(serverKeyed).toEqual([]);
+    expect(def('channels').remove).toBeNull();
   });
 });

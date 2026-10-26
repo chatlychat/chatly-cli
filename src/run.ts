@@ -12,9 +12,12 @@ import { bool, parseArgs, str, type ParsedArgs } from './args.js';
 import * as ai from './commands/ai.js';
 import * as auth from './commands/auth.js';
 import * as config from './commands/config.js';
+import * as deliveriesCmd from './commands/deliveries.js';
+import * as initCmd from './commands/init.js';
 import * as insights from './commands/insights.js';
 import * as integrations from './commands/integrations.js';
 import * as listenCmd from './commands/listen.js';
+import * as pac from './commands/platform-as-code.js';
 import * as cmd from './commands/resources.js';
 import * as wac from './commands/workspace-as-code.js';
 import { resolveCredentials } from './config.js';
@@ -29,7 +32,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.4.1';
+const VERSION = '0.5.2';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version']);
@@ -51,7 +54,7 @@ export const COMMANDS: Readonly<
   Record<string, (c: ChatlyClient, a: ParsedArgs) => Promise<number>>
 > = {
   // ── Core ──────────────────────────────────────────────────────────────
-  whoami: async (c, a) => auth.whoami(c, bool(a.flags, 'json')),
+  whoami: async (c, a) => auth.whoami(c, a),
   conversations: cmd.conversations,
   contacts: cmd.contacts,
   tickets: cmd.tickets,
@@ -62,6 +65,7 @@ export const COMMANDS: Readonly<
 
   // ── Config as code ────────────────────────────────────────────────────
   bots: config.bots,
+  deliveries: deliveriesCmd.deliveries,
   'bot-routes': config.botRoutes,
   triggers: config.triggers,
   brands: config.brands,
@@ -83,6 +87,14 @@ export const COMMANDS: Readonly<
   'customer-cards': integrations.customerCards,
   'docs-sources': integrations.docsSources,
   channels: integrations.channels,
+  /*
+   * The data-rights executor (CHT-X03). Beside `webhooks` rather than under
+   * `contacts`, because its caller is a PRIVACY PLATFORM's operator setting
+   * up a fan-out, not somebody managing a contact — and `chatly privacy
+   * executor-key` is the command they run once while filling in a
+   * registration form.
+   */
+  privacy: integrations.privacy,
 
   // ── Workspace as code ─────────────────────────────────────────────────
   /*
@@ -94,6 +106,18 @@ export const COMMANDS: Readonly<
    */
   plan: wac.plan,
   apply: wac.apply,
+  /*
+   * The same verbs over `/v1/platform/*` with a `cp_` credential (CHT-F04).
+   * A group word here, unlike above, because the bare verbs are taken and a
+   * platform document describes TENANTS — typing `platform` first is the
+   * moment somebody notices which credential they are about to use.
+   */
+  platform: pac.platform,
+
+  // ── Install ───────────────────────────────────────────────────────────
+  // Writes files into the current project from the web channel's own embed
+  // block (CHT-F02). Read `commands/init.ts` for what it refuses to do.
+  init: initCmd.init,
 
   // ── AI ────────────────────────────────────────────────────────────────
   ai: ai.ai,
@@ -116,6 +140,7 @@ export const ALIASES: Readonly<Record<string, string>> = {
   report: 'reports',
   channel: 'channels',
   bot: 'bots',
+  delivery: 'deliveries',
   'bot-route': 'bot-routes',
   trigger: 'triggers',
   brand: 'brands',

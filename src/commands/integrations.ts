@@ -8,9 +8,24 @@
  */
 import { bool, str, type ParsedArgs } from '../args.js';
 import { itemsOf, printJson, printTable } from '../output.js';
-import { bodyFrom, need, renderList, showObject, showRows } from './common.js';
+import {
+  bodyFrom,
+  need,
+  queryFrom,
+  renderList,
+  showObject,
+  showRows,
+  type FlagSpec,
+} from './common.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
+
+/** The delivery log's filters: `--trace`, `--endpoint`, `--status`. */
+const DELIVERY_FILTERS: ReadonlyArray<FlagSpec> = [
+  ['trace', 'trace'],
+  ['endpoint', 'endpointId'],
+  ['status', 'status'],
+];
 
 export async function webhooks(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const sub = args.path[1] ?? 'deliveries';
@@ -18,15 +33,27 @@ export async function webhooks(chatly: ChatlyClient, args: ParsedArgs): Promise<
     case 'deliveries':
       return renderList(
         args,
-        ['id', 'event', 'status', 'responseStatus', 'attempts', 'createdAt'],
+        /*
+         * The API's own field names. This read `event`, `responseStatus` and
+         * `attempts` — none of which `GET /v1/webhooks/deliveries` sends — so
+         * three of six columns printed blank on every row. `trace` is the
+         * `X-Chatly-Trace` each attempt carried (CHT-SI13).
+         */
+        ['id', 'eventType', 'status', 'httpStatus', 'attempt', 'trace', 'createdAt'],
         /*
          * `deliveries`, not `list`. On the extended surface `webhooks.list`
          * is the SUBSCRIPTION list (`GET /v1/webhooks`) and the delivery log
          * is `deliveries`/`deliveriesAll` — this called `list`/`listAll` and
          * would have rendered subscriptions under delivery column headings.
          */
-        (q) => chatly.webhooks.deliveries(q),
-        () => chatly.webhooks.deliveriesAll(),
+        /*
+         * `--trace <ulid>` answers "what did Chatly send because of this
+         * chain?" from the id a partner product logged. `--endpoint` and
+         * `--status` are the two filters the route already had and this
+         * command never forwarded.
+         */
+        (q) => chatly.webhooks.deliveries({ ...q, ...queryFrom(args, DELIVERY_FILTERS) }),
+        () => chatly.webhooks.deliveriesAll(queryFrom(args, DELIVERY_FILTERS)),
       );
     case 'delivery':
       return showObject(await chatly.webhooks.delivery(need(args, 2, 'a delivery id')));
@@ -271,6 +298,124 @@ export async function docsSources(chatly: ChatlyClient, args: ParsedArgs): Promi
   }
 }
 
+/**
+ * `chatly privacy …` — the data-rights executor's own commands (CHT-X03).
+ *
+ * ═══ WHY THE EXECUTOR KEY NEEDS A CLI COMMAND AT ALL ══════════════════════
+ *
+ * Because without one, `POST /v1/privacy/executor-key` had no caller.
+ * `check-api-route-callers` flagged it, and CLAUDE.md §5 is explicit that the
+ * fix is a caller and NOT an allow-list entry: an endpoint nothing can reach
+ * is a feature nobody can use, which is how the Gmail and Outlook mailbox
+ * sign-in shipped complete and unreachable.
+ *
+ * It is a good fit rather than a box-tick. The route exists to be run ONCE,
+ * by an operator, while they are filling in a privacy platform's executor
+ * registration form — exactly the shape of thing a CLI is for, and exactly
+ * the shape of thing that does not deserve a dashboard screen. The response
+ * is three fields a human pastes.
+ *
+ * ═══ WHY IT PRINTS A WARNING AND NOT JUST THE OBJECT ══════════════════════
+ *
+ * The secret is shown ONCE. `showObject` on a shown-once credential is the
+ * ergonomic trap every key-minting surface here has: the value scrolls past
+ * in a terminal somebody then closes. So the human-readable form labels it,
+ * says it will not be shown again, and names the sealed alternative — while
+ * `--json` stays exactly the API response, because that is what a script
+ * pipes into `jq`.
+ */
+export async function privacy(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
+  const sub = args.path[1] ?? 'help';
+  switch (sub) {
+    case 'executor-key': {
+      /*
+       * `@RequireIdempotencyKey()` on the route, so a key is MANDATORY: a
+       * retried POST without one answers 428 in production. The SDK mints one
+       * per write, which is why this is a plain `request` and not a special
+       * case — see `packages/sdk-spec/CONTRACT.md`.
+       */
+      const res = await chatly.request<{
+        id: string;
+        workspaceId: string;
+        executorUrl: string;
+        scopes: readonly string[];
+        token: string | null;
+        sealedSecret: string | null;
+        sealedScheme: string | null;
+        note: string;
+      }>('POST', '/v1/privacy/executor-key');
+      if (bool(args.flags, 'json')) {
+        return showObject(res);
+      }
+      process.stdout.write(
+        `Executor URL   ${res.executorUrl}\n` +
+          `Workspace      ${res.workspaceId}\n` +
+          `Scopes         ${res.scopes.join(', ')}\n` +
+          `Key id         ${res.id}\n`,
+      );
+      if (res.token !== null) {
+        process.stdout.write(
+          `Secret         ${res.token}\n` +
+            '\nThe secret is shown ONCE and is not recoverable. Register the three\n' +
+            'values above with your privacy platform now.\n' +
+            'To receive it encrypted instead, send an X-Secret-Recipient header\n' +
+            '(see /docs/api-rest, "Never printing a key").\n',
+        );
+      } else {
+        process.stdout.write(
+          `Sealed secret  ${res.sealedSecret ?? '(none)'}\n` +
+            `Sealed scheme  ${res.sealedScheme ?? '(none)'}\n` +
+            '\nSealed to the public key you sent. Decrypt it with the matching\n' +
+            'private key; refuse a scheme you do not recognise rather than\n' +
+            'guessing from the length.\n',
+        );
+      }
+      return 0;
+    }
+    case 'lookup':
+      /*
+       * Resolve a subject. A POST rather than a GET because an OIDC issuer is
+       * a URL and a subject claim is arbitrary text, neither of which survives
+       * a query string reliably — the route's own header makes the argument.
+       */
+      return showObject(
+        await chatly.request('POST', '/v1/privacy/lookup', {
+          body: bodyFrom(args, 'the subject (issuer/subject, externalId or emails)'),
+        }),
+      );
+    case 'request':
+      return showObject(
+        await chatly.request('POST', '/v1/privacy/requests', {
+          body: bodyFrom(args, 'the request (caseId, type and subject)'),
+        }),
+      );
+    case 'status':
+      return showObject(
+        await chatly.request(
+          'GET',
+          `/v1/privacy/requests/${encodeURIComponent(need(args, 2, 'a request id'))}`,
+        ),
+      );
+    case 'cancel':
+      return showObject(
+        await chatly.request(
+          'DELETE',
+          `/v1/privacy/requests/${encodeURIComponent(need(args, 2, 'a request id'))}`,
+        ),
+      );
+    default:
+      process.stderr.write(
+        'Usage: chatly privacy <executor-key|lookup|request|status|cancel>\n' +
+          '  executor-key            mint the credential a privacy platform registers\n' +
+          '  lookup --body <json>    resolve a person to a stable subjectId\n' +
+          '  request --body <json>   file a data-rights request\n' +
+          '  status <id>             read one back\n' +
+          '  cancel <id>             withdraw one that has not run\n',
+      );
+      return 2;
+  }
+}
+
 export async function channels(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const sub = args.path[1] ?? 'list';
   switch (sub) {
@@ -304,6 +449,42 @@ export async function channels(chatly: ChatlyClient, args: ParsedArgs): Promise<
           { body: bodyFrom(args, 'the fields to change') },
         ),
       );
+    case 'set-key':
+      // Adopt an existing channel into config-as-code: `chatly.json` matches channels on `key`.
+      return showObject(
+        await chatly.request(
+          'PATCH',
+          `/v1/channels/${encodeURIComponent(need(args, 2, 'a channel id'))}`,
+          { body: { key: need(args, 3, 'a key (^[a-z][a-z0-9-]{0,63}$)') } },
+        ),
+      );
+    case 'brand': {
+      /*
+       * A DTCG `brand.json` (CHT-SI14). With `--url` or `--file`/`--body`
+       * it APPLIES the document; with neither it reads back the resolved
+       * mapping — each role's value and which layer it came from, because
+       * `brand.json` ranks below the workspace theme and the channel's own
+       * settings and "why didn't my accent change?" is answered by `source`.
+       */
+      const path = `/v1/channels/${encodeURIComponent(need(args, 2, 'a channel id'))}/brand`;
+      const url = str(args.flags, 'url');
+      const hasDocument =
+        str(args.flags, 'file') !== undefined || str(args.flags, 'body') !== undefined;
+      if (url !== undefined && hasDocument) {
+        throw new Error('Pass --url or a document (--file/--body), not both.');
+      }
+      if (url !== undefined) {
+        return showObject(await chatly.request('PUT', path, { body: { brandUrl: url } }));
+      }
+      if (hasDocument) {
+        return showObject(
+          await chatly.request('PUT', path, {
+            body: { brand: bodyFrom(args, 'the brand document') },
+          }),
+        );
+      }
+      return showObject(await chatly.request('GET', path));
+    }
     case 'rotate-secret':
       // The inbound webhook signing secret, shown once.
       return showObject(
@@ -324,7 +505,15 @@ export async function channels(chatly: ChatlyClient, args: ParsedArgs): Promise<
        * the only field that distinguishes "locked to these sites" from "open
        * to every site".
        */
-      printTable(itemsOf(res), ['id', 'publicId', 'type', 'name', 'status', 'originsRestricted']);
+      printTable(itemsOf(res), [
+        'id',
+        'key',
+        'publicId',
+        'type',
+        'name',
+        'status',
+        'originsRestricted',
+      ]);
       return 0;
     }
     default:

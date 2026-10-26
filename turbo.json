@@ -1,0 +1,10 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "//": "build is `tsc -p tsconfig.json`, which typechecks exactly what `tsc --noEmit` did (same tsconfig, specs included). typecheck depends on build instead of running the same program twice.",
+  "tasks": {
+    "typecheck": {
+      "dependsOn": ["build"]
+    }
+  }
+}

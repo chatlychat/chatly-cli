@@ -47,8 +47,8 @@
  * the reason on the line. The alternative in every case is picking one and
  * being wrong silently, which is how the wrong resource gets overwritten.
  */
+import { sectionWarnings } from './diff-warnings.js';
 import {
-  looksLikeCredential,
   normalizedKey,
   projected,
   routeForField,
@@ -56,11 +56,12 @@ import {
   type ResourceDef,
   type UpdateRoute,
 } from './resources.js';
-import { isRedacted, REDACTED, sameValue } from './values.js';
+import { isRedacted, narrowTo, REDACTED, sameValue, splitRedacted } from './values.js';
 
 import type { DocumentRow, WacDocument } from './document.js';
 
 export { isRedacted, REDACTED, sameValue } from './values.js';
+export { vocabularyWarnings } from './diff-warnings.js';
 
 export interface FieldChange {
   readonly name: string;
@@ -87,6 +88,21 @@ export interface PlanItem {
   readonly row: DocumentRow | undefined;
   /** Wire field → id, for references already resolvable at plan time. */
   readonly resolved: Readonly<Record<string, string>>;
+  /**
+   * Placeholder → id for a reference that fills the ROUTE PATH rather than
+   * the body (`ResourceRef.pathParam`).
+   *
+   * Separate from `resolved` because the two have opposite treatment: a body
+   * ref is COMPARED against the live row, and a path ref must never be — the
+   * live row has no such field, so a diff on it would report a change every
+   * run. Empty for every workspace-level resource, which declares no path
+   * refs at all.
+   *
+   * Carried on an ORPHAN too, where there is no document row to resolve from:
+   * the parent's id is read off the live row, because `--prune` needs it to
+   * build the DELETE path.
+   */
+  readonly pathParams: Readonly<Record<string, string>>;
   /** `type/key` for each reference, so apply can skip a failed dependency. */
   readonly dependsOn: ReadonlyArray<string>;
 }
@@ -108,7 +124,7 @@ export interface LiveSection {
 
 /* ── Live indexing ────────────────────────────────────────────────────── */
 
-interface LiveIndex {
+export interface LiveIndex {
   /** Normalised key → projected row. */
   readonly byKey: ReadonlyMap<string, Record<string, unknown>>;
   /** Keys that appeared more than once: matched to nothing, on purpose. */
@@ -122,6 +138,19 @@ function indexLive(def: ResourceDef, rows: ReadonlyArray<Record<string, unknown>
   const ambiguous = new Set<string>();
   let keyless = 0;
   for (const raw of rows) {
+    /*
+     * A row the document can never match, dropped before anything else.
+     *
+     * `ignoreLive` is the revoked credential: the Platform API keeps a
+     * revoked `ck_` key and a revoked bot credential in their lists with
+     * `revokedAt` set. Filtered HERE rather than in the reader because this
+     * is the one function that decides what a document row may be matched
+     * to — a filter in the reader would leave a second path (a test driving
+     * `buildPlan` with literal rows) able to match one.
+     */
+    if (def.ignoreLive?.(raw) === true) {
+      continue;
+    }
     const row = projected(def, raw);
     const key = row[def.naturalKey];
     if (typeof key !== 'string' || key.length === 0) {
@@ -162,6 +191,19 @@ export interface PlanOptions {
    * ever tell you that for you.
    */
   readonly writeOnly?: boolean;
+  /**
+   * Live rows of a type the document REFERENCES without declaring a section
+   * for it — resolvable by a reference, never planned, never an orphan.
+   *
+   * The platform document's adoption shape needs it (CHT-F04): an `apiKeys`
+   * row naming `workspace: "acme"` for a tenant somebody else created, with
+   * no `workspaces:` section at all. Without this, `known` holds only
+   * declared types and the row is blocked as naming something "neither on
+   * the server nor created by this plan" — which is false, the tenant is on
+   * the server. Declaring the section instead would turn every other tenant
+   * into an orphan line. Empty for the workspace document.
+   */
+  readonly referenced?: ReadonlyArray<{ readonly def: ResourceDef; readonly section: LiveSection }>;
 }
 
 export function buildPlan(
@@ -173,6 +215,14 @@ export function buildPlan(
   const warnings: string[] = [];
   const pruneUnsafe: string[] = [];
   const known = new Map<string, KnownIds>();
+  for (const { def, section } of opts.referenced ?? []) {
+    const ids: KnownIds = new Map();
+    for (const [key, row] of indexLive(def, section.rows).byKey) {
+      const id = row[def.idField];
+      ids.set(key, typeof id === 'string' ? id : '');
+    }
+    known.set(def.type, ids);
+  }
 
   for (const section of doc.sections) {
     const { def } = section;
@@ -222,12 +272,41 @@ export function buildPlan(
         reason: undefined,
         row: undefined,
         resolved: {},
+        /*
+         * Off the LIVE row, because there is no document row to resolve a
+         * reference from — this is a resource the file does not mention. A
+         * nested DELETE path needs its parent's id
+         * (`/v1/platform/workspaces/{workspaceId}/users/{id}`), and the only
+         * place that id exists here is the row the reader fetched. The reader
+         * stamps it; see `platform-live.ts`.
+         */
+        pathParams: orphanPathParams(def, row),
         dependsOn: [],
       });
     }
   }
 
   return { items, warnings, pruneUnsafe };
+}
+
+/**
+ * The parent id a nested DELETE needs, read off the live row.
+ *
+ * `{}` for every workspace-level resource: none declares a `parent`, so
+ * nothing changes for them. A parented row whose stamped parent id is missing
+ * gets `{}` as well rather than a guess — `apply.ts` then refuses to build a
+ * path with an unfilled placeholder, which is a loud failure instead of a
+ * DELETE sent to a literal `{workspaceId}`.
+ */
+function orphanPathParams(
+  def: ResourceDef,
+  row: Record<string, unknown>,
+): Readonly<Record<string, string>> {
+  if (def.parent === undefined) {
+    return {};
+  }
+  const id = row[def.parent.wire];
+  return typeof id === 'string' && id.length > 0 ? { [def.parent.wire]: id } : {};
 }
 
 function planRow(
@@ -240,6 +319,7 @@ function planRow(
 ): PlanItem {
   const notes: string[] = [];
   const resolved: Record<string, string> = {};
+  const pathParams: Record<string, string> = {};
   const dependsOn: string[] = [];
 
   /* ── References first: an unresolvable one blocks the whole row. ────── */
@@ -259,6 +339,8 @@ function planRow(
     const id = target.get(normRef);
     if (id === null || id === undefined || id === '') {
       notes.push(`${wire} resolves to ${ref.type}/${normRef}, which this plan creates first.`);
+    } else if (ref.pathParam === true) {
+      pathParams[wire] = id;
     } else {
       resolved[wire] = id;
     }
@@ -278,9 +360,9 @@ function planRow(
 
   const liveRow = index.byKey.get(norm);
   if (liveRow === undefined) {
-    return planCreate(def, row, notes, resolved, dependsOn);
+    return planCreate(def, row, notes, resolved, pathParams, dependsOn);
   }
-  return planUpdate(def, row, liveRow, notes, resolved, dependsOn, opts);
+  return planUpdate(def, row, liveRow, notes, resolved, pathParams, dependsOn, opts);
 }
 
 function planCreate(
@@ -288,6 +370,7 @@ function planCreate(
   row: DocumentRow,
   notes: string[],
   resolved: Record<string, string>,
+  pathParams: Record<string, string>,
   dependsOn: ReadonlyArray<string>,
 ): PlanItem {
   if (def.create === null) {
@@ -300,6 +383,7 @@ function planCreate(
             'misspelling, not an absence.'
         : `there is no route that creates a ${def.label}.`,
       dependsOn,
+      pathParams,
     );
   }
   const changes: FieldChange[] = Object.entries(row.body)
@@ -328,6 +412,7 @@ function planCreate(
     reason: undefined,
     row,
     resolved,
+    pathParams,
     dependsOn,
   };
 }
@@ -338,25 +423,31 @@ function planUpdate(
   liveRow: Record<string, unknown>,
   notes: string[],
   resolved: Record<string, string>,
+  pathParams: Record<string, string>,
   dependsOn: ReadonlyArray<string>,
   opts: PlanOptions,
 ): PlanItem {
   const liveIdRaw = liveRow[def.idField];
   const liveId = typeof liveIdRaw === 'string' ? liveIdRaw : undefined;
-  if (def.update.length === 0 && def.create?.upsert !== true) {
-    return blocked(
-      def,
-      row,
-      `it exists and there is no route that changes a ${def.label} in place.`,
-      dependsOn,
-    );
-  }
-
+  /*
+   * No early refusal for a type with no update route.
+   *
+   * There was one — `update.length === 0` returned `blocked` before a single
+   * field was compared — and it was harmless while every workspace-level type
+   * either had an update route or was an upsert. Every Platform API type has
+   * neither (CHT-F04), so a tenant that matched its document exactly planned
+   * as BLOCKED: `plan` could never say "everything matches", which is the one
+   * sentence the feature exists to print. Unchanged rows are now `noop`, and
+   * a changed field is refused below by `routeForField` finding no route,
+   * with the resource's own `updateBlocked` sentence.
+   */
   const changes: FieldChange[] = [];
   const extra = [...notes];
 
   const compare = (name: string, desired: unknown): void => {
-    if (name === def.naturalKey) {
+    // A parented row's child key is HALF its natural key (`acme/ops@…`), so
+    // it is skipped for the same reason — it matched, modulo `normalizeKey`.
+    if (name === def.naturalKey || name === def.parent?.childKey) {
       /*
        * The key is what matched this row; it is not a field to change. A
        * document that renames a key is describing a DIFFERENT resource — the
@@ -366,9 +457,39 @@ function planUpdate(
        */
       return;
     }
+    if (def.mergeFields?.includes(name) === true && !def.opaque.includes(name)) {
+      /*
+       * A merge field holding credentials (a channel's `config`) is split
+       * per leaf: the redacted leaves are write-only, everything else is
+       * diffed, so drift shows. Left alone unless `--write-only`, which
+       * sends the whole value — the same contract as an opaque field.
+       */
+      const s = splitRedacted(liveRow[name], desired);
+      if (s.redacted) {
+        const route = routeForField(def, name);
+        if (opts.writeOnly === true) {
+          changes.push({ name, from: undefined, to: desired, route });
+          extra.push(
+            `${name} holds redacted credentials; --write-only sends it without a comparison.`,
+          );
+        } else {
+          extra.push(
+            `${name} holds credentials that read back as \`${REDACTED}\`, so those are not ` +
+              'diffed and are left alone unless `--write-only` is passed; the rest is compared.',
+          );
+          if (!sameValue(s.live, s.desired)) {
+            changes.push({ name, from: s.live, to: s.desired, route });
+          }
+        }
+        return;
+      }
+    }
+    // A MERGE-written field is compared on the keys the document names only.
+    const live =
+      def.mergeFields?.includes(name) === true ? narrowTo(liveRow[name], desired) : liveRow[name];
     const unreadable = def.opaque.includes(name)
       ? 'write-only'
-      : isRedacted(liveRow[name])
+      : isRedacted(live)
         ? `redacted (reads back as \`${REDACTED}\`)`
         : undefined;
     if (unreadable !== undefined) {
@@ -393,7 +514,7 @@ function planUpdate(
       extra.push(`${name} is ${unreadable}; --write-only sends it without a comparison.`);
       return;
     }
-    const current = liveRow[name];
+    const current = live;
     if (!sameValue(current, desired)) {
       changes.push({
         name,
@@ -423,6 +544,7 @@ function planUpdate(
       reason: undefined,
       row,
       resolved,
+      pathParams,
       dependsOn,
     };
   }
@@ -446,6 +568,7 @@ function planUpdate(
           `${unroutable.map((c) => `\`${c.name}\``).join(', ')} changed, and ` +
             (def.updateBlocked ?? `no route can change that on a ${def.label}.`),
           dependsOn,
+          pathParams,
         ),
         liveId,
         changes,
@@ -471,6 +594,7 @@ function planUpdate(
     reason: undefined,
     row,
     resolved,
+    pathParams,
     dependsOn,
   };
 }
@@ -480,6 +604,7 @@ function blocked(
   row: DocumentRow,
   reason: string,
   dependsOn: ReadonlyArray<string>,
+  pathParams: Readonly<Record<string, string>> = {},
 ): PlanItem {
   return {
     type: def.type,
@@ -492,106 +617,15 @@ function blocked(
     reason,
     row,
     resolved: {},
+    /*
+     * KEPT on a blocked row. `apply` never writes one, so it is not needed
+     * for a request — but `--prune` and the JSON renderer both read a plan
+     * item without knowing its action, and a field that is sometimes absent
+     * is a field somebody reads as "this row has no parent".
+     */
+    pathParams,
     dependsOn,
   };
-}
-
-/* ── Warnings ─────────────────────────────────────────────────────────── */
-
-function sectionWarnings(
-  def: ResourceDef,
-  rows: ReadonlyArray<DocumentRow>,
-  live: LiveSection,
-  index: LiveIndex,
-): ReadonlyArray<string> {
-  const out: string[] = [];
-
-  if (live.possiblyTruncated === true) {
-    out.push(
-      `${def.type}: the list route is @PaginationExempt and answered at its cap, so there may ` +
-        'be rows this plan cannot see. `--prune` is refused for this type while that holds — ' +
-        'a row past the cap is invisible, not absent.',
-    );
-  }
-
-  if (index.keyless > 0) {
-    out.push(
-      `${def.type}: ${String(index.keyless)} ${def.label}(s) on the server have no ` +
-        `\`${def.naturalKey}\`, so this file can neither match nor prune them. They are not ` +
-        'listed below at all — give them one in the dashboard to bring them under management.',
-    );
-  }
-
-  for (const key of index.ambiguous) {
-    out.push(
-      `${def.type}: ${def.naturalKey} "${key}" is on more than one ${def.label}` +
-        (def.keyEnforced
-          ? '.'
-          : ` — the database does not make \`${def.naturalKey}\` unique for this resource, so ` +
-            'only this file does.'),
-    );
-  }
-
-  out.push(...vocabularyWarnings(def, rows, live.rows));
-  return out;
-}
-
-/**
- * A field the document declares that NO live row carries.
- *
- * This is what stands in for a per-resource field allow-list, and it is
- * better evidence than one: the vocabulary comes from the server on every
- * run, so it cannot drift out of step with an API that shipped a field
- * yesterday. CLAUDE.md's `helpProfile` / `profile` bug — a key zod strips,
- * answering 200 while doing nothing — is exactly what it catches, and
- * `unwritable` in `resources.ts` catches the mirror case (a field the server
- * returns and no write path accepts).
- *
- * Two limits, both reported rather than hidden:
- *
- *  - With no live rows there is nothing to compare against, so a brand-new
- *    workspace gets no warnings at all.
- *  - A legitimately optional field nobody in this workspace has set produces
- *    a false positive. That is why it is a warning and not a refusal: being
- *    wrong costs one line of output, where refusing wrongly costs a config
- *    file that cannot be applied.
- */
-export function vocabularyWarnings(
-  def: ResourceDef,
-  rows: ReadonlyArray<DocumentRow>,
-  liveRows: ReadonlyArray<Record<string, unknown>>,
-): ReadonlyArray<string> {
-  if (liveRows.length === 0 || rows.length === 0) {
-    return [];
-  }
-  const serverFields = new Set<string>();
-  for (const raw of liveRows) {
-    for (const field of Object.keys(projected(def, raw))) {
-      serverFields.add(field);
-    }
-  }
-  const unknown = new Set<string>();
-  for (const row of rows) {
-    for (const field of Object.keys(row.body)) {
-      if (serverFields.has(field) || def.opaque.includes(field)) {
-        continue;
-      }
-      // A credential-looking name is write-only by nature, not a typo.
-      if (looksLikeCredential(field)) {
-        continue;
-      }
-      unknown.add(field);
-    }
-  }
-  if (unknown.size === 0) {
-    return [];
-  }
-  return [
-    `${def.type}: ${[...unknown].map((f) => `\`${f}\``).join(', ')} — no ${def.label} on this ` +
-      `server carries ${unknown.size === 1 ? 'that field' : 'those fields'}. The API validates ` +
-      'with zod and zod STRIPS an unknown key, so a misspelling is a 200 that did nothing. ' +
-      `The fields it does return: ${[...serverFields].sort().join(', ')}.`,
-  ];
 }
 
 /** Counts for the summary line. */
