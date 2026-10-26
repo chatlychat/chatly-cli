@@ -1,5 +1,25 @@
 # @chatlychat/cli — changelog
 
+## 0.5.4 — 2026-10-26
+
+**Byte-identical to 0.5.3 in behaviour.** Released so the repository and the
+registry can be shown to agree.
+
+0.5.3's first publish failed on `npm test` — `run.ts` still said
+`VERSION = '0.5.2'` — so the constant was fixed in a LATER commit and the tag
+re-cut. The artifact on npm is correct and contains the fix. But
+`check-unreleased-package-changes.mjs` compares a package's files against the
+commit that SET its version, and for 0.5.3 those were two different commits,
+so it reported `run.ts` as an unreleased change for ever. It was right about
+what it can see: nothing in the repository records that the re-cut tag is what
+shipped.
+
+The gate's model is that a version bump and its publish are one commit. That
+is worth keeping — it is what makes "these changes cannot reach anyone"
+checkable at all — so the answer is a release that satisfies it rather than an
+exemption that hollows it out. Bump the constant and the manifest together,
+in one commit, and this does not recur.
+
 ## 0.5.3 — 2026-10-26
 
 **Published with npm provenance.** No code change.
