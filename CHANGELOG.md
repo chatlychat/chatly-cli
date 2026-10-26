@@ -1,8 +1,29 @@
 # @chatlychat/cli — changelog
 
-## 0.5.2 — 2026-10-26
+## 0.5.3 — 2026-10-26
 
-Not yet published.
+**Published with npm provenance.** No code change.
+
+`0.5.2` went out without an attestation — `npm view @chatlychat/cli
+dist.attestations` was empty — while `core`, `world`, `react-native` and
+`blocks` were all attested. An integrator who runs
+`npx @chatlychat/cli@… plan/apply` against production with a workspace key
+spotted it, and they were right to: of every package here, the one that
+executes against a live workspace is the one most worth verifying.
+
+The cause was the release path rather than a setting. Provenance requires a
+CI publish, and this repository is private and out of Actions minutes, so
+attested releases go out from the PUBLIC mirror's `publish.yml` on a tag
+(ADR 0057). The CLI's mirror has had that workflow all along; 0.5.2 was
+published from the maintainer's machine with `publish-packages.mjs`, which
+cannot sign. An already-published version's attestations cannot be added
+afterwards, so the fix is a release rather than a repair.
+
+Its 0.5.2 entry said "Not yet published." That was wrong at the moment it was
+written and stayed wrong after the publish; the version was live on the
+registry the whole time.
+
+## 0.5.2 — 2026-10-26
 
 ### Added
 
@@ -32,8 +53,11 @@ Not yet published.
 
 ## 0.5.1 — 2026-10-25
 
-Not yet published. Bumped in the commit that carries the code, so
-`check-unreleased-package-changes` holds; a release is a separate step.
+Published, without provenance — see 0.5.3. This entry said "Not yet
+published", which was true when it was written and was never updated when the
+release happened; the registry has had it since 2026-10-25. Two consecutive
+entries claiming that is why 0.5.3's note says to read the registry rather
+than this file.
 
 ### Added
 
