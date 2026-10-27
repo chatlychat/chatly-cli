@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline/promises';
 import { bool, str, type ParsedArgs } from '../args.js';
 import { CONFIG_PATH, readConfig, resolveCredentials, writeConfig } from '../config.js';
 import { printJson } from '../output.js';
+import { isStaff, staffLogin, staffLogout } from './staff-login.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
 
@@ -15,6 +16,9 @@ import type { ChatlyClient } from '@chatlychat/sdk-node';
  * than pretending to hide it.
  */
 export async function login(args: ParsedArgs): Promise<number> {
+  if (isStaff(args)) {
+    return staffLogin(args);
+  }
   let key = str(args.flags, 'key');
   if (key === undefined) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -38,7 +42,10 @@ export async function login(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-export function logout(): number {
+export function logout(args?: ParsedArgs): number {
+  if (args !== undefined && isStaff(args)) {
+    return staffLogout();
+  }
   const existing = readConfig();
   delete existing.apiKey;
   writeConfig(existing);

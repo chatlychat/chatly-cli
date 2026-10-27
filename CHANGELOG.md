@@ -1,5 +1,25 @@
 # @chatlychat/cli — changelog
 
+## 0.8.0 — 2026-10-27
+
+- **`chatly login --staff`** (CHT-SI08, ADR 0082) — sign in with the OAuth 2.0
+  Device Authorization Grant (RFC 8628) against an Atlas STAFF instance:
+  `POST <issuer>/oauth2/device_authorization`, then poll
+  `POST <issuer>/oauth2/token` honouring `authorization_pending` and
+  `slow_down`. The issuer and client id are never baked in — pass `--issuer`
+  and `--client-id` or set `CHATLY_STAFF_ISSUER` / `CHATLY_STAFF_CLIENT_ID`;
+  `http://` is accepted for localhost only. The token is stored 0600 under
+  `staff` in the config file and is sent only by a command run with `--staff`
+  (`chatly api GET /v1/admin/platform-apps --staff`); an absent or expired one
+  refuses locally. `chatly logout --staff` removes it and leaves the API key.
+
+  **This entry was written under 0.5.2 on the branch that built it, and 0.5.2
+  is published.** Merging carried it into a released section describing a
+  feature that version does not contain — the same mis-attribution found in
+  `@chatlychat/react-native`'s changelog earlier today, and the reason to read
+  the registry rather than this file when the two disagree. Moved here, where
+  it ships.
+
 ## 0.7.0 — 2026-10-26
 
 - **`chatly api-keys create`** — the automatable step sealed delivery never had. `secret keypair` and `secret open` shipped earlier today and are both scripting tools; the step between them required a browser, because `POST /v1/api-keys` was closed to API keys. It is open now, bounded by the escalation check rather than by the guard (a key cannot confer a scope it does not hold), so the whole flow is scriptable: `chatly api-keys create --name <n> --scope <s> --recipient x25519:<publicKey>` returns a sealed blob and no plaintext. Repeatable `--scope`, or `--scope a,b`. The minting key needs `workspace:write` plus every scope it confers, so the first key in a workspace still comes from the dashboard.
@@ -113,6 +133,13 @@ registry the whole time.
   external agent's delivery log by the `eventId` its endpoint saw; `replay`
   re-sends the original body under the original id. Same routes as
   `bots deliveries | delivery | redeliver`.
+
+## 0.5.2 — 2026-10-26
+
+Not yet published. Bumped in the commit that carries the code, so
+`check-unreleased-package-changes` holds; a release is a separate step.
+
+### Added
 
 ## 0.5.1 — 2026-10-25
 

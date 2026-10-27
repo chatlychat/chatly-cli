@@ -29,6 +29,8 @@ USAGE
 
 AUTH
   login                       Store an API key in ~/.config/chatly/config.json (0600)
+                              login --staff: sign in as Chatly staff (device code), then
+                              add --staff to a command to send that token instead
   logout                      Remove the stored key
   whoami                      Which workspace this key belongs to, and its scopes
                               (a cp_ credential: scopes, expiry and guardrails)

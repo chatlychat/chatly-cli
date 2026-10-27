@@ -21,8 +21,9 @@ import * as listenCmd from './commands/listen.js';
 import * as pac from './commands/platform-as-code.js';
 import * as cmd from './commands/resources.js';
 import * as secretCmd from './commands/secret.js';
+import { isStaff, resolveStaffToken } from './commands/staff-login.js';
 import * as wac from './commands/workspace-as-code.js';
-import { resolveCredentials } from './config.js';
+import { readConfig, resolveCredentials } from './config.js';
 import { HELP } from './help.js';
 
 /**
@@ -34,7 +35,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.7.0';
+const VERSION = '0.8.0';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -159,6 +160,11 @@ export const ALIASES: Readonly<Record<string, string>> = {
   'knowledge-gap': 'knowledge-gaps',
 };
 
+/** `CHATLY_API_URL` or the saved `apiUrl`, for a `--staff` command (which has no API key to resolve). */
+function resolveCredentialsUrl(): string | undefined {
+  return process.env['CHATLY_API_URL'] ?? readConfig().apiUrl;
+}
+
 /**
  * How a client is made. Injectable for tests ONLY.
  *
@@ -203,7 +209,7 @@ export async function run(
     return auth.login(args);
   }
   if (command === 'logout') {
-    return auth.logout();
+    return auth.logout(args);
   }
   /*
    * Sealed delivery's reader half, handled HERE because it needs no
@@ -223,7 +229,18 @@ export async function run(
       return 2;
     }
     // Resolution order and the reason for it are in config.ts.
-    const creds = resolveCredentials(str(args.flags, 'key'), str(args.flags, 'api-url'));
+    /*
+     * `--staff` swaps the credential for the stored staff sign-in (ADR 0082):
+     * a short-lived Atlas token for the Operator API, never an API key. Only
+     * when asked for, so a staff token cannot leak into an ordinary command,
+     * and a missing or expired one refuses here instead of as a server 401.
+     */
+    const creds = isStaff(args)
+      ? {
+          apiKey: resolveStaffToken(),
+          apiUrl: str(args.flags, 'api-url') ?? resolveCredentialsUrl(),
+        }
+      : resolveCredentials(str(args.flags, 'key'), str(args.flags, 'api-url'));
     const chatly = makeClient({
       apiKey: creds.apiKey,
       ...(creds.apiUrl === undefined ? {} : { apiUrl: creds.apiUrl }),

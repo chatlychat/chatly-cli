@@ -23,6 +23,8 @@ export const CONFIG_PATH = join(
 export interface CliConfig {
   apiKey?: string;
   apiUrl?: string;
+  /** From `chatly login --staff` (RFC 8628 device grant). Sent only with `--staff`. */
+  staff?: { issuer: string; accessToken: string; expiresAt: number };
 }
 
 export function readConfig(path: string = CONFIG_PATH): CliConfig {
@@ -35,7 +37,22 @@ export function readConfig(path: string = CONFIG_PATH): CliConfig {
       return {};
     }
     const obj = parsed as Record<string, unknown>;
+    const staff = obj['staff'];
+    const staffObj =
+      typeof staff === 'object' && staff !== null ? (staff as Record<string, unknown>) : null;
     return {
+      ...(staffObj !== null &&
+      typeof staffObj['issuer'] === 'string' &&
+      typeof staffObj['accessToken'] === 'string' &&
+      typeof staffObj['expiresAt'] === 'number'
+        ? {
+            staff: {
+              issuer: staffObj['issuer'],
+              accessToken: staffObj['accessToken'],
+              expiresAt: staffObj['expiresAt'],
+            },
+          }
+        : {}),
       ...(typeof obj['apiKey'] === 'string' ? { apiKey: obj['apiKey'] } : {}),
       ...(typeof obj['apiUrl'] === 'string' ? { apiUrl: obj['apiUrl'] } : {}),
     };
