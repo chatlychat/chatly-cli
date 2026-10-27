@@ -49,9 +49,13 @@ export function logout(): number {
 /**
  * The first call anyone should make.
  *
- * `GET /v1/api-keys/whoami` is the only api-keys route a key may call, and it
- * turns a mis-scoped key into an obvious error here rather than a 403 from an
- * unrelated endpoint three days into an integration.
+ * It turns a mis-scoped key into an obvious error here rather than a 403 from
+ * an unrelated endpoint three days into an integration.
+ *
+ * This said `whoami` was "the only api-keys route a key may call", which was
+ * true when it was written and is not now: list, revoke, revoke-self, rotate
+ * and `scopes` opened on 2026-10-24, and minting on 2026-10-26 — which is
+ * what `chatly api-keys create` drives.
  */
 export async function whoami(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const json = bool(args.flags, 'json');

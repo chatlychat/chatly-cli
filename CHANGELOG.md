@@ -1,5 +1,10 @@
 # @chatlychat/cli — changelog
 
+## 0.7.0 — 2026-10-26
+
+- **`chatly api-keys create`** — the automatable step sealed delivery never had. `secret keypair` and `secret open` shipped earlier today and are both scripting tools; the step between them required a browser, because `POST /v1/api-keys` was closed to API keys. It is open now, bounded by the escalation check rather than by the guard (a key cannot confer a scope it does not hold), so the whole flow is scriptable: `chatly api-keys create --name <n> --scope <s> --recipient x25519:<publicKey>` returns a sealed blob and no plaintext. Repeatable `--scope`, or `--scope a,b`. The minting key needs `workspace:write` plus every scope it confers, so the first key in a workspace still comes from the dashboard.
+- Exits 1 rather than 0 if a mint returns neither a token nor a sealed secret — unreachable today, but reporting success for a live credential nobody can use is the failure this mechanism exists to prevent.
+
 ## 0.6.0 — 2026-10-26
 
 ### Added

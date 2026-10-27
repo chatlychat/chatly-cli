@@ -32,6 +32,9 @@ AUTH
   logout                      Remove the stored key
   whoami                      Which workspace this key belongs to, and its scopes
                               (a cp_ credential: scopes, expiry and guardrails)
+  api-keys create             Mint a key. --recipient seals it to an X25519
+                              public key, so no plaintext is ever returned
+                              (see SEALED DELIVERY below)
 
 CONVERSATIONS
   conversations list          Open conversations, newest first

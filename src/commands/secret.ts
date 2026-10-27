@@ -66,8 +66,6 @@ const TAG_LEN = 16;
 
 /** DER prefix for a raw X25519 public key, so 32 bytes become a `KeyObject`. */
 const SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
-/** DER prefix for a raw X25519 private key. */
-const PKCS8_PREFIX = Buffer.from('302e020100300506032b656e04220420', 'hex');
 
 function publicFromRaw(raw: Buffer): KeyObject {
   return createPublicKey({

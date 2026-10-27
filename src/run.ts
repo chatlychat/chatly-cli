@@ -10,6 +10,7 @@ import { ChatlyApiError, ChatlyClient, ChatlyTransportError } from '@chatlychat/
 
 import { bool, parseArgs, str, type ParsedArgs } from './args.js';
 import * as ai from './commands/ai.js';
+import * as apiKeysCmd from './commands/api-keys.js';
 import * as auth from './commands/auth.js';
 import * as config from './commands/config.js';
 import * as deliveriesCmd from './commands/deliveries.js';
@@ -33,7 +34,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -56,6 +57,12 @@ export const COMMANDS: Readonly<
 > = {
   // ── Core ──────────────────────────────────────────────────────────────
   whoami: async (c, a) => auth.whoami(c, a),
+  /*
+   * Beside `whoami` because it is the other half of credential handling, and
+   * because it is what makes `secret keypair` / `secret open` a usable pair
+   * rather than two tools with no step between them. See `api-keys.ts`.
+   */
+  'api-keys': apiKeysCmd.apiKeys,
   conversations: cmd.conversations,
   contacts: cmd.contacts,
   tickets: cmd.tickets,
