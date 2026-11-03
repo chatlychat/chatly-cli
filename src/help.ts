@@ -49,6 +49,16 @@ CONVERSATIONS
   conversations return-to-bot <id> <bot-id>
                               Give an open thread back to an assistant
 
+BOT EVALUATION
+  evals list                  Test suites in this workspace
+  evals push --file <path>    Create or replace a suite from a JSON file
+                              (--suite <id> patches an existing one)
+  evals run --suite <id>      Run it and wait. Exits 1 if a case failed, so
+                              this is a CI step. --timeout <seconds>
+  evals show --suite <id> --run <id>
+                              A finished run, case by case
+  evals delete --suite <id>   Delete a suite, its cases and its runs
+
 CONTACTS
   contacts list               People in this workspace
   contacts get <id>

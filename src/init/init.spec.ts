@@ -113,7 +113,28 @@ describe('chatly init', () => {
     expect(read('app/api/chatly/identity/route.ts')).toContain(
       "import { chatlyUserHash } from '@chatlychat/widget-react/server';",
     );
-    expect(read('components/chatly.tsx')).toContain('<ChatlyLauncher publicId="acme-web"');
+    const launcher = read('components/chatly.tsx');
+    expect(launcher).toContain('<ChatlyLauncher');
+    expect(launcher).toContain('publicId="acme-web"');
+    /*
+     * The identity goes through `identityEndpoint`, which is a declared prop,
+     * rather than a `useState`/`useEffect`/`fetch` loop spreading
+     * `externalId` and `userHash` as top-level props that
+     * `ChatlyLauncherProps` does not declare.
+     *
+     * CONTROL: restore the spread form (`{...(identity ?? {})}`) and both of
+     * the last two assertions fail.
+     *
+     * The second one matches the CALL and the react import, not the bare word
+     * `useEffect`: the template's own docblock says in prose that it used to
+     * be such a loop, which is worth keeping, and `not.toContain('useEffect')`
+     * failed on that sentence. An assertion that cannot tell a mechanism from
+     * a mention of one is not asserting about the mechanism.
+     */
+    expect(launcher).toContain('identityEndpoint="/api/chatly/identity"');
+    expect(launcher).not.toMatch(/\buseEffect\(/);
+    expect(launcher).not.toMatch(/\buseState\(/);
+    expect(launcher).not.toMatch(/from 'react'/);
     expect(read('CHATLY-PRIVACY.md')).toContain(
       '| `chatly:vt:acme-web` | localStorage | Keeps the visitor \\| session | persistent | functional | session-start |',
     );
@@ -196,10 +217,23 @@ describe('chatly init', () => {
     expect(existsSync(join(dir, 'chatly.csp.mjs'))).toBe(false);
   });
 
-  it('atlas: no server route, and the launcher passes getToken through', async () => {
+  it('atlas: no server route, and the launcher passes getToken inside `visitor`', async () => {
+    /*
+     * `visitor: { getToken }`, not a top-level `getToken`.
+     * `ChatlyLauncherProps` declares no `getToken`, `externalId` or
+     * `userHash`; all three live inside `visitor`. The scaffolded Atlas app
+     * identified nobody for as long as this test asserted only that the
+     * STRING `{ getToken }` appeared somewhere in the file — which is true of
+     * a prop that does not exist, because `optionsFrom` forwards what it does
+     * not recognise and the widget drops an unknown option in silence.
+     *
+     * CONTROL: put `{...(getToken === undefined ? {} : { getToken })}` back in
+     * `LAUNCHER_NEXT_ATLAS` and this fails on the `visitor:` assertion.
+     */
     await go(['init', 'next', '--identity', 'atlas']);
     expect(existsSync(join(dir, 'app/api/chatly/identity/route.ts'))).toBe(false);
-    expect(read('components/chatly.tsx')).toContain('{ getToken }');
+    const launcher = read('components/chatly.tsx');
+    expect(launcher).toContain('visitor: { getToken }');
   });
 
   it('several web channels and no --public-id is refused with the list', async () => {
@@ -247,7 +281,12 @@ describe('chatly init', () => {
     expect(route).not.toMatch(/from '(@remix-run\/[a-z-]+|react-router)'/);
 
     const launcher = read('app/components/chatly.tsx');
-    expect(launcher).toContain('<ChatlyLauncher publicId="acme-web"');
+    expect(launcher).toContain('<ChatlyLauncher');
+    expect(launcher).toContain('publicId="acme-web"');
+    expect(launcher).toContain('identityEndpoint="/api/chatly/identity"');
+    // The Remix derivation is four string `.replace`s over the Next template,
+    // and a `.replace` whose needle moved is a silent no-op. These four are
+    // what prove each one still landed.
     expect(launcher).toContain('`app/routes/api.chatly.identity.ts`');
     expect(launcher).toContain('`chatly init remix`');
     expect(launcher).toContain('in app/root.tsx');
@@ -286,11 +325,11 @@ describe('chatly init', () => {
     vi.unstubAllEnvs();
   });
 
-  it('remix atlas: no route, and the launcher passes getToken through', async () => {
+  it('remix atlas: no route, and the launcher passes getToken inside `visitor`', async () => {
     expect(await go(['init', 'remix', '--identity', 'atlas'])).toBe(0);
     expect(existsSync(join(dir, 'app/routes/api.chatly.identity.ts'))).toBe(false);
     const launcher = read('app/components/chatly.tsx');
-    expect(launcher).toContain('{ getToken }');
+    expect(launcher).toContain('visitor: { getToken }');
     expect(launcher).toContain('`chatly init remix --identity atlas`');
     expect(launcher).not.toContain("'use client'");
   });

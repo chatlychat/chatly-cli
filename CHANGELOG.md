@@ -1,5 +1,18 @@
 # @chatlychat/cli — changelog
 
+## 0.8.1 — 2026-11-03
+
+- `chatly init next` and `chatly init remix` scaffold props that EXIST.
+  Both React launchers passed the identity as top-level props —
+  `{...identity}` spreading `externalId`/`userHash`, and `{...{ getToken }}` —
+  and `ChatlyLauncherProps` declares none of the three; they live inside
+  `visitor`. So every scaffolded React app identified nobody, in silence,
+  because the widget drops an unknown option without a word. The Atlas
+  template now passes `visitor={{ getToken }}`, and the HMAC template uses
+  `identityEndpoint="/api/chatly/identity"` — the option that exists to delete
+  the `useState`/`useEffect`/`fetch` loop it used to write out. (FormFlow,
+  2026-11-03.)
+
 ## 0.8.0 — 2026-10-27
 
 - **`chatly login --staff`** (CHT-SI08, ADR 0082) — sign in with the OAuth 2.0

@@ -1,6 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseArgs } from '../args.js';
 import { readConfig } from '../config.js';
 import { normaliseIssuer, resolveStaffToken, staffLogin, staffLogout } from './staff-login.js';
+
+import type { AddressInfo } from 'node:net';
 
 /**
  * A real HTTP issuer on loopback speaking RFC 8628: the real `fetch`, real form

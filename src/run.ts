@@ -14,6 +14,7 @@ import * as apiKeysCmd from './commands/api-keys.js';
 import * as auth from './commands/auth.js';
 import * as config from './commands/config.js';
 import * as deliveriesCmd from './commands/deliveries.js';
+import * as evalsCmd from './commands/evals.js';
 import * as initCmd from './commands/init.js';
 import * as insights from './commands/insights.js';
 import * as integrations from './commands/integrations.js';
@@ -35,7 +36,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -81,6 +82,13 @@ export const COMMANDS: Readonly<
   'email-templates': config.emailTemplates,
   macros: config.macros,
   'knowledge-gaps': config.knowledgeGaps,
+  /*
+   * Beside `bots` because a suite belongs to one bot's persona, and a group
+   * word of its own because `chatly evals run` is what a CI step contains —
+   * `bots eval` would bury it under a CRUD group. Exits non-zero on a failed
+   * case, which is the whole reason it exists. See `commands/evals.ts`.
+   */
+  evals: evalsCmd.evals,
 
   // ── Integrations ──────────────────────────────────────────────────────
   webhooks: integrations.webhooks,
@@ -158,6 +166,7 @@ export const ALIASES: Readonly<Record<string, string>> = {
   'customer-card': 'customer-cards',
   'docs-source': 'docs-sources',
   'knowledge-gap': 'knowledge-gaps',
+  eval: 'evals',
 };
 
 /** `CHATLY_API_URL` or the saved `apiUrl`, for a `--staff` command (which has no API key to resolve). */

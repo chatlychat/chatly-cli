@@ -102,8 +102,7 @@ const RENDER: Readonly<Record<Framework, string>> = {
   next: 'Render <Chatly /> from components/chatly.tsx once, in app/layout.tsx. Install @chatlychat/widget-react.',
   remix:
     'Render <Chatly /> from app/components/chatly.tsx once, in app/root.tsx. Install @chatlychat/widget-react.',
-  astro:
-    'Render <Chatly /> from src/components/Chatly.astro once, before </body> in your layout.',
+  astro: 'Render <Chatly /> from src/components/Chatly.astro once, before </body> in your layout.',
   express: 'Paste chatly/snippet.html before </body> on every page that shows the widget.',
 };
 
@@ -117,7 +116,7 @@ export function nextSteps(framework: Framework, identity: 'hmac' | 'atlas'): Rea
     );
   } else {
     steps.push(
-      'Set the channel to identityVerification.mode "atlas" with your instance id, and create the `chatly` JWT template in Atlas.',
+      'Set the channel to identityVerification.mode "oidc" with tokenProvider "atlas" and your instance id, and create the `chatly` JWT template in Atlas.',
     );
   }
   steps.push(
