@@ -14,6 +14,7 @@ import * as apiKeysCmd from './commands/api-keys.js';
 import * as auth from './commands/auth.js';
 import * as config from './commands/config.js';
 import * as deliveriesCmd from './commands/deliveries.js';
+import * as doctorCmd from './commands/doctor.js';
 import * as evalsCmd from './commands/evals.js';
 import * as initCmd from './commands/init.js';
 import * as insights from './commands/insights.js';
@@ -36,7 +37,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.8.2';
+const VERSION = '0.9.0';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -130,6 +131,16 @@ export const COMMANDS: Readonly<
    * moment somebody notices which credential they are about to use.
    */
   platform: pac.platform,
+
+  /*
+   * The install health check (FormFlow, 2026-11-04). Beside `channels`
+   * because it reads their `embed` block, and a verb of its own because what
+   * it does is not a CRUD operation on a channel — it probes the deployed
+   * install from OUTSIDE, the way a browser on a customer's page does, which
+   * is the only vantage point from which the CORS and CSP-host defects it
+   * exists for are visible at all. Exits non-zero on a failed check.
+   */
+  doctor: doctorCmd.doctor,
 
   // ── Install ───────────────────────────────────────────────────────────
   // Writes files into the current project from the web channel's own embed

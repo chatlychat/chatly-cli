@@ -1,5 +1,36 @@
 # @chatlychat/cli — changelog
 
+## 0.9.0 — 2026-11-04
+
+- **`chatly doctor`** — health-check a DEPLOYED widget install from outside,
+  the way a browser on a customer's page sees it. Asked for by FormFlow:
+  "CLI 0.8.2 still has no command that health-checks a deployed site's setup.
+  Run before this deploy, it would have flagged the missing upload host."
+
+  Seven checks, and every one of them is a question a server cannot answer
+  about itself — which is why the two defects that reached production on
+  2026-11-04 were invisible to every gate. `upload.preflight` sends the real
+  browser preflight (`OPTIONS`, `Access-Control-Request-Method: PUT`,
+  `Access-Control-Request-Headers: content-type`) against a real signed URL
+  and requires a 2xx AND an `access-control-allow-origin`: the bucket had no
+  CORS policy at all, so every attachment upload in the product died in the
+  browser and production held zero messages with an attachment, ever.
+  `upload.host` warns when uploads do not go to a `chatlychat.com` host, which
+  was the second defect — a raw R2 account endpoint in every customer's CSP.
+  `csp.hosts` dials every host we publish in `embed.contentSecurityPolicy`,
+  because one that does not resolve is a feature that fails silently in a
+  visitor's browser. `widget.assets` requires every asset the loader fetches
+  to answer 200 with a JavaScript content-type, reading the chunk list from
+  the widget host's own `version.json` rather than a hand-written list.
+  `widget.origins` reports an empty `allowedOrigins` as a WARNING rather than
+  a pass, and with `--origin <url>` fails with the exact value to add.
+  `identity.jwks` reports the server's verdict for the identity provider's key
+  set. `files.deprecated` warns while a file host is being retired.
+
+  Exits 1 if any check FAILED; warnings alone exit 0, so it is usable as a
+  deploy gate. `--channel <publicId|id>` narrows to one channel, `--json`
+  emits every verdict.
+
 ## 0.8.2 — 2026-11-03
 
 - The scaffolded React component takes an identity provider that answers

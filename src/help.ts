@@ -188,6 +188,18 @@ WORKSPACE AS CODE
                               everything matches the document
 
 INSTALL
+  doctor                      Health-check a DEPLOYED widget install from outside, the way
+                              a browser on a customer's page sees it: the attachment-upload
+                              CORS preflight, whether the upload host is a Chatly host,
+                              whether every host in the published CSP answers, whether every
+                              widget asset serves as JavaScript, allowedOrigins, the
+                              identity-provider key set and any retiring file host.
+                              Exits 1 if any check FAILED; warnings alone exit 0
+                              --channel <publicId|id>  just this web channel
+                              --origin <url>   the site it is installed on: asserts the
+                                               origin is allowed, and is the Origin the
+                                               upload preflight carries
+                              --json           every verdict as JSON
   init next|remix|astro|express
                               Scaffold the widget into this project for a web channel:
                               identity route, launcher or snippet, CSP sources
