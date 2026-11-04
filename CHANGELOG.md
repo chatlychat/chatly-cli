@@ -1,5 +1,15 @@
 # @chatlychat/cli — changelog
 
+## 0.8.2 — 2026-11-03
+
+- The scaffolded React component takes an identity provider that answers
+  `null`. `chatly init next` and `chatly init remix` declared
+  `getToken?: () => Promise<string>`, so the component they write for you
+  rejected the very provider its own comment tells you to pass — a hosted
+  provider's minter is `() => Promise<string | null>`, `null` meaning signed
+  out. Now `() => Promise<string | null>`, matching
+  `@chatlychat/widget-element` 0.27.1.
+
 ## 0.8.1 — 2026-11-03
 
 - `chatly init next` and `chatly init remix` scaffold props that EXIST.

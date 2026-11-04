@@ -136,7 +136,7 @@ const LAUNCHER_NEXT_ATLAS = (input: ScaffoldInput): string => `'use client';
  */
 import { ChatlyLauncher } from '@chatlychat/widget-react';
 
-export function Chatly({ getToken }: { getToken?: () => Promise<string> }) {
+export function Chatly({ getToken }: { getToken?: () => Promise<string | null> }) {
   return (
     <ChatlyLauncher
       publicId=${JSON.stringify(input.publicId)}
