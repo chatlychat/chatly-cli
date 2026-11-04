@@ -21,18 +21,34 @@
  * So the checks here are deliberately the ones a server cannot answer about
  * itself: does a browser preflight succeed, does every host we published in a
  * customer's CSP actually answer, does every asset the loader fetches serve
- * with a JavaScript content-type.
+ * with a JavaScript content-type, and — since 2026-11-04 — does the SITE's
+ * own policy admit those hosts at all (`csp.site`, in `doctor-csp-site.ts`).
+ *
+ * That last one is the same report coming back a day later: "5 ok, 1 warning,
+ * 0 failed" against a page whose live `connect-src` was missing the upload
+ * host. Every check the command had was about OUR deployment — we published
+ * the host, the host answered, the assets served — and nothing had read the
+ * customer's page. A CSP violation is invisible server-side by construction,
+ * because the request is never made.
  *
  * ═══ WHY IT IS A SEPARATE FILE WITH NO RUNTIME IMPORTS ════════════════════
  *
- * Every import below is `import type`. That is what lets the real shipped
- * code be exercised in isolation — `doctor.ts` reaches the SDK, the config
- * file and the printer, and a reproduction of this logic beside it would be a
- * test of the reproduction. Keep it that way: a runtime import here moves the
- * judgement back behind a package graph.
+ * Every import here is `import type`, with ONE runtime exception —
+ * `doctor-csp-site.js`, which is itself a file with no imports at all. That
+ * is what lets the real shipped code be exercised in isolation: `doctor.ts`
+ * reaches the SDK, the config file and the printer, and a reproduction of
+ * this logic beside it would be a test of the reproduction. A sibling that
+ * imports nothing is still isolation; one that reaches the SDK, the
+ * filesystem or a workspace package is not.
+ *
+ * `csp.site` lives in that sibling because this file was at 606 of the 650
+ * lines `check-file-size` allows, and because the CSP matcher has enough edge
+ * cases to want a spec of its own.
  */
 
 /** `warn` never fails the run; `fail` does. See `exitCodeFor`. */
+import { siteCspVerdict } from './doctor-csp-site.js';
+
 export type Verdict = 'pass' | 'fail' | 'warn';
 
 export interface DoctorCheck {
@@ -307,6 +323,21 @@ export async function runChecks(
   for (const ch of channels) {
     out.push(uploadHostCheck(ch));
     out.push(await cspHostsCheck(ch, deps));
+    /*
+     * Only with `--origin`: there is no site to read otherwise, and a check
+     * saying "not checked" on every flagless run is the noise that teaches
+     * people to skim. `widget.origins` already says the flag exists.
+     */
+    if (opts.origin !== undefined) {
+      out.push({
+        name: `csp.site (${ch.label})`,
+        ...(await siteCspVerdict({
+          origin: opts.origin,
+          published: rec(ch.embed['contentSecurityPolicy']),
+          fetchFn: deps.fetchFn,
+        })),
+      });
+    }
     out.push(await widgetAssetsCheck(ch, deps));
     out.push(allowedOriginsCheck(ch, opts));
     const deprecated = strings(ch.embed['deprecatedFileOrigins']);

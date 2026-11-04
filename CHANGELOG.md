@@ -1,5 +1,41 @@
 # @chatlychat/cli — changelog
 
+## 0.9.1 — 2026-11-04
+
+- **`chatly doctor --origin <site>` now reads that site's own
+  Content-Security-Policy.** 0.9.0 answered "5 ok, 1 warning, 0 failed"
+  against a page whose live `connect-src` was missing
+  `https://uploads.chatlychat.com` — every attachment upload from that widget
+  was being refused by the browser, and the command that exists to catch
+  exactly this said nothing. Every check it had was about Chatly's deployment:
+  we published the host, the host answered, the assets served. Nothing had
+  read the customer's page, and a CSP violation is invisible from a server by
+  construction, because the request is never made.
+
+  The new `csp.site` check fetches the page and reads what a browser reads:
+  the `Content-Security-Policy` response header **and** any
+  `<meta http-equiv="Content-Security-Policy">` in the HTML, every policy
+  applying at once, with `default-src` filling in for a directive the site did
+  not name. It compares them against the four source lists the channel
+  publishes and **fails** the run naming each host no policy admits, with the
+  directive it belongs in. Emitted only with `--origin`.
+
+  Permissive where it is unsure — a port, a path and a source written with no
+  scheme are not held against the site — because a false failure sends
+  somebody to fix a policy that was already right. Three things are not
+  simplified: the `default-src` fallback, the scheme-upgrade pair
+  (`https://host` admits `wss://host`, which is CSP's own rule and matters
+  because the realtime host is published as `wss://`), and policy
+  intersection, since two policies both bind.
+
+- **`upload.preflight` can run now.** It needs `POST /v1/uploads/presign` to
+  sign an upload — writing no object and no row — in order to learn the exact
+  URL a browser would `PUT` to, and that route admitted no API key at all, so
+  the check warned and carried on. A headline check that cannot run is worse
+  than one that fails, because it reports as health. The route is open to a
+  `ck_` key on `uploads:create` as of the same day; add the scope to your key
+  (`chatly whoami` lists what it has).
+
 ## 0.9.0 — 2026-11-04
 
 - **`chatly doctor`** — health-check a DEPLOYED widget install from outside,

@@ -363,6 +363,65 @@ describe('widget.assets', () => {
   });
 });
 
+describe('csp.site', () => {
+  /*
+   * Not emitted without `--origin`, because there is no site to read — and a
+   * check that prints "not checked" on every run without a flag is the noise
+   * that teaches people to skim the output.
+   */
+  it('is absent without --origin', async () => {
+    const { all } = await check('csp.hosts', [channelRow()]);
+    expect(all.map((c) => c.name).filter((n) => n.startsWith('csp.site'))).toEqual([]);
+  });
+
+  it('FAILS on a site whose own policy does not admit the upload host', async () => {
+    const { check: c, sent } = await check(
+      'csp.site',
+      [channelRow()],
+      {
+        ...HEALTHY,
+        'https://their-site.com': {
+          status: 200,
+          headers: {
+            'content-security-policy':
+              "default-src 'self' https://widget.chatlychat.com https://api.chatlychat.com " +
+              'https://rt.chatlychat.com https://files.chatlychat.com data: blob:',
+          },
+        },
+      },
+      { origin: 'https://their-site.com' },
+    );
+    expect(c.verdict).toBe('fail');
+    expect(c.detail).toContain('https://uploads.chatlychat.com (connect-src)');
+    // It actually read the page, rather than deriving a verdict from config.
+    expect(sent.some((x) => x.url === 'https://their-site.com')).toBe(true);
+  });
+
+  it('passes a site that copied the whole policy, wss included', async () => {
+    const { check: c } = await check(
+      'csp.site',
+      [channelRow()],
+      {
+        ...HEALTHY,
+        'https://their-site.com': {
+          status: 200,
+          headers: {
+            'content-security-policy':
+              "script-src 'self' https://widget.chatlychat.com; connect-src " +
+              'https://api.chatlychat.com https://rt.chatlychat.com ' +
+              'https://uploads.chatlychat.com; img-src https://files.chatlychat.com data: ' +
+              'blob:; media-src https://files.chatlychat.com',
+          },
+        },
+      },
+      { origin: 'https://their-site.com' },
+    );
+    // `wss://rt.chatlychat.com` is published and the site names only
+    // `https://rt.chatlychat.com`, which CSP's source-scheme matching admits.
+    expect(c.verdict).toBe('pass');
+  });
+});
+
 describe('widget.origins', () => {
   it('warns rather than passing when the list is empty, because that admits anyone', async () => {
     const { check: c } = await check('widget.origins', [
