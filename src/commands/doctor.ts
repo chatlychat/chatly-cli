@@ -13,6 +13,7 @@
 import { bool, str, type ParsedArgs } from '../args.js';
 import { itemsOf, printJson } from '../output.js';
 import { exitCodeFor, runChecks, selectChannels, type DoctorCheck } from './doctor-checks.js';
+import { readinessChecks, unavailable } from './doctor-readiness.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
 
@@ -63,6 +64,13 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
       return Array.isArray(res.checks) ? (res.checks as readonly unknown[]) : [];
     },
   });
+
+  // Advisory: an older deployment without the route must not break the rest of doctor.
+  try {
+    checks.push(...readinessChecks(await chatly.request('GET', '/v1/workspace/readiness')));
+  } catch (err) {
+    checks.push(unavailable(err instanceof Error ? err.message : 'request failed'));
+  }
 
   if (bool(args.flags, 'json')) {
     printJson({ checks, ok: exitCodeFor(checks) === 0 });

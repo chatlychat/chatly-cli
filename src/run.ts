@@ -37,7 +37,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -273,6 +273,22 @@ export async function run(
 }
 
 /**
+ * `error.details.reason` from a response body, or null. The SDK keeps only the
+ * raw text, so this is the one place the envelope `{error:{details:{reason}}}`
+ * is read; any non-JSON or differently-shaped body is simply "no reason".
+ */
+function errorReason(body: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const error = (parsed as { error?: { details?: { reason?: unknown } } } | null)?.error;
+    const reason = error?.details?.reason;
+    return typeof reason === 'string' ? reason : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * One place that turns an error into an exit code and a sentence.
  *
  * A CLI whose failure mode is a stack trace is a CLI people stop trusting.
@@ -285,7 +301,10 @@ export function explain(err: unknown): { code: number; message: string } {
     const id = err.requestId === null ? '' : `  (request ${err.requestId})`;
     const hint =
       err.status === 401
-        ? '\nThe key was rejected. Check it with `chatly whoami`, or run `chatly login` again.'
+        ? // A right key of the wrong KIND: the server's message already names the route to use.
+          errorReason(err.body) === 'wrong_credential_type'
+          ? ''
+          : '\nThe key was rejected. Check it with `chatly whoami`, or run `chatly login` again.'
         : err.status === 403
           ? '\nThe key is valid but lacks a scope for this route. `chatly whoami` lists what it ' +
             'has, and `chatly workspace key-scopes` lists every scope there is.'

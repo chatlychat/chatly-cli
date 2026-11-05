@@ -89,10 +89,12 @@
 export type { Action, ResourceDef, ResourceRef, UpdateRoute } from './resource-def.js';
 export { looksLikeCredential, normalizedKey, projected, routeForField } from './resource-def.js';
 
+import { SERVER_OWNED } from './resource-shared.js';
+import { PRIVACY_PARTNERS } from './resources-privacy.js';
+
 import type { ResourceDef } from './resource-def.js';
 
 /** Fields every row carries that no write path accepts. */
-const SERVER_OWNED = ['id', 'workspaceId', 'createdAt', 'updatedAt'] as const;
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -109,6 +111,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * to be looking for it.
  */
 export const RESOURCES: ReadonlyArray<ResourceDef> = [
+  PRIVACY_PARTNERS,
   {
     type: 'brands',
     label: 'brand',

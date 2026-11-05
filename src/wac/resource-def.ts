@@ -77,12 +77,35 @@ export interface ResourceDef {
   /** The server's own normalisation, applied to both sides before matching. */
   readonly normalizeKey?: (key: string) => string;
   readonly list: { readonly path: string; readonly paged: boolean };
+  /**
+   * Which rows of the list route actually EXIST.
+   *
+   * The model assumes a list route returns the set that exists, and
+   * `/v1/privacy/partners` does not: it enumerates the whole provider
+   * REGISTRY and marks each `enabled: true|false`. Without this, every
+   * provider the document does not name looks like an orphan `--prune`
+   * should delete, and a provider it does name looks like it already exists.
+   *
+   * Filtered at the fetch, not in the diff, so `plan`, `apply` and `--prune`
+   * cannot disagree about what is there.
+   */
+  readonly existsWhen?: (row: Readonly<Record<string, unknown>>) => boolean;
   /** The field on a live row that identifies it in a write path. */
   readonly idField: string;
   readonly create: {
     readonly path: string;
     /** POST is an upsert keyed on the body's `id`, not a plain create. */
     readonly upsert?: boolean;
+    /**
+     * `PUT` for a resource whose create and update are ONE route keyed on the
+     * natural key, as `/v1/privacy/partners/{provider}` is. `{id}` in the
+     * path is filled from the authored key, which such a resource knows
+     * before the server has seen it; POST (the default) fills it with ''.
+     *
+     * Only valid with `keySource: 'authored'` — a server-assigned key does
+     * not exist yet at create time, so there would be nothing to PUT to.
+     */
+    readonly method?: 'POST' | 'PUT';
   } | null;
   /** Empty means there is no way to change one in place. */
   readonly update: ReadonlyArray<UpdateRoute>;

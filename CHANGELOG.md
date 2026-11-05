@@ -1,5 +1,26 @@
 # @chatlychat/cli — changelog
 
+## 0.9.2 — 2026-11-05
+
+- **`chatly doctor` now prints the workspace readiness report.** The code
+  (`doctor-readiness.ts`, commit 65bd0585) shipped in the repository but was
+  never released.
+- **`chatly plan` / `apply` now manage the data-rights opt-in.** A new
+  `privacyPartners` resource, keyed on the provider, so a privacy integration
+  can live in the same document as the channels and bots instead of being the
+  one piece that needed a hand-written `curl`. Three things about it are
+  unlike every other resource and are documented beside it: the list route
+  enumerates the whole provider registry rather than what exists (so a
+  `--prune` would otherwise offer to delete every provider you did not name),
+  create and update are one `PUT`, and `completionSecret` never reads back —
+  a plan says it cannot tell whether that field changed rather than rewriting
+  it every run.
+- **A wrong-kind key no longer gets "the key was rejected".** When a 401 carries
+  `details.reason: "wrong_credential_type"` (for example a `cp_` platform key
+  sent to a workspace route) the key is fine; the server's own message names the
+  route to use, and the `chatly whoami` / `chatly login` hint sent people to
+  re-check a key that was never the problem. Ordinary 401s keep the hint.
+
 ## 0.9.1 — 2026-11-04
 
 - **`chatly doctor --origin <site>` now reads that site's own

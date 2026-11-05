@@ -322,6 +322,41 @@ describe('explain()', () => {
     expect(message).toContain('chatly login');
   });
 
+  it('drops the "key was rejected" advice when the key is the wrong kind', async () => {
+    const { ChatlyAuthenticationError } = await import('@chatlychat/sdk-node');
+    const mk = (body: string) =>
+      new ChatlyAuthenticationError({
+        status: 401,
+        code: 'unauthorized',
+        message: 'This endpoint takes a workspace API key.',
+        requestId: null,
+        body,
+        retryAfter: null,
+      });
+    const wrong = explain(
+      mk(
+        JSON.stringify({
+          error: {
+            code: 'unauthorized',
+            message: 'x',
+            details: {
+              reason: 'wrong_credential_type',
+              presented: 'platform',
+              accepted: ['workspace_api_key'],
+            },
+          },
+        }),
+      ),
+    ).message;
+    expect(wrong).toContain('takes a workspace API key');
+    expect(wrong).not.toContain('chatly whoami');
+    // Negative: another reason, and a non-JSON body, still get the hint.
+    expect(explain(mk('{"error":{"details":{"reason":"expired"}}}')).message).toContain(
+      'chatly whoami',
+    );
+    expect(explain(mk('<html>')).message).toContain('chatly whoami');
+  });
+
   it('distinguishes a missing scope (403) from a bad key (401)', async () => {
     const { ChatlyPermissionError } = await import('@chatlychat/sdk-node');
     const { message } = explain(

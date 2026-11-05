@@ -180,10 +180,17 @@ export function writesFor(
     if (def.create === null) {
       return [];
     }
+    /*
+     * A `PUT` create is one route for create and update, keyed on the natural
+     * key — `/v1/privacy/partners/{provider}`. The key is authored (asserted
+     * by `resources.spec.ts`), so it is known here; a POST create has no id
+     * yet and fills `{id}` with '' as before.
+     */
+    const method = def.create.method ?? 'POST';
     return [
       {
-        method: 'POST',
-        path: fill(def.create.path, '', pathWired),
+        method,
+        path: fill(def.create.path, method === 'PUT' ? item.row.key : '', pathWired),
         body: { ...item.row.body, ...wired },
       },
     ];

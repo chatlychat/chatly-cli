@@ -123,12 +123,22 @@ export async function readLive(
         }
         cursor = next;
       }
-      out.set(def.type, { rows });
+      out.set(def.type, {
+        rows:
+          def.existsWhen === undefined ? rows : rows.filter((r) => def.existsWhen?.(r) === true),
+      });
       continue;
     }
     const answer = await chatly.request<unknown>('GET', def.list.path);
-    const rows = Array.isArray(answer) ? (answer as Array<Record<string, unknown>>) : [];
-    out.set(def.type, { rows, possiblyTruncated: rows.length >= EXEMPT_LIST_CAP });
+    const all = Array.isArray(answer) ? (answer as Array<Record<string, unknown>>) : [];
+    /*
+     * `possiblyTruncated` is judged on what the SERVER returned, before
+     * `existsWhen` — the question it answers is whether the route hit its
+     * cap, which a local filter cannot change.
+     */
+    const rows =
+      def.existsWhen === undefined ? all : all.filter((r) => def.existsWhen?.(r) === true);
+    out.set(def.type, { rows, possiblyTruncated: all.length >= EXEMPT_LIST_CAP });
   }
   return out;
 }
