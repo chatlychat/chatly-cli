@@ -1,5 +1,29 @@
 # @chatlychat/cli — changelog
 
+## 0.9.6 — 2026-11-06
+
+ForgeDeck's sixth report. All three are `plan` telling the truth about what
+`apply` will do.
+
+- **`plan` no longer says `REFUSED` about a document `apply` accepts.** A
+  document carrying a `completionSecret` and no `completionsUrl`, against a
+  partner whose completions are already off, plans as `unchanged` — a secret
+  is a credential and is kept out of the diff — so `apply` sends nothing and
+  exits 0. `plan` printed `1 document(s) will be REFUSED` and exited 3, and a
+  pipeline gating on 3 stopped for a change that was ready. Only a row that
+  `apply` would actually send can be refused now. The warning about the stray
+  secret stays, because a secret with nowhere to report is still worth saying.
+- **An empty `completionsUrl` is flagged.** `completionsUrl: ""` planned with
+  no warning and exited 2, then `apply` failed with `completionsUrl: Invalid
+url`. It is now refused with the same message as any other bad URL.
+  `completionsUrl: null` remains the documented way to switch completions off
+  and is still silent.
+- **The summary counts refused documents, and `--json` lists them.** The same
+  output used to say `1 to create` and `0 that cannot be applied`; the count
+  now includes them, the `Run chatly apply` line is dropped when every change
+  in the plan is refused, and `refused` is a top-level array in
+  `plan --json` so a script no longer has to parse prose out of `warnings`.
+
 ## 0.9.5 — 2026-11-06
 
 ForgeDeck's fifth report, items 2 to 4.

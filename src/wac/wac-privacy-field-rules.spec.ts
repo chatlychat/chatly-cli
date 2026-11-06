@@ -22,29 +22,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { bound, unbound, URL_OK } from './__tests__/privacy-fixtures.js';
 import { def, doc, live } from './__tests__/wac-fixtures.js';
 import { requiredFieldWarnings, sectionWarnings } from './diff-warnings.js';
 import { buildPlan } from './diff.js';
 import { parseDocument } from './document.js';
 
-const URL_OK = 'https://api.cookiemunch.net/v1/x';
-
 /** A registry row for a provider nobody has opted into, carrying the host rule. */
-const unbound = (suffixes: readonly string[] = ['cookiemunch.net']) => ({
-  provider: 'cookiemunch',
-  label: 'cookiemunch',
-  enabled: false,
-  cbid: null,
-  externalId: '0199f3c2-7a1e-7c3b-9d2a-5e4f6a7b8c9d',
-  executorKeyUrl: 'https://api.chatlychat.com/v1/privacy/partners/cookiemunch/{externalId}/key',
-  lastMintedAt: null,
-  completionsUrl: null,
-  completionSecretSet: false,
-  supportsCompletions: true,
-  completionHostSuffixes: suffixes,
-  lastSignedCompletionAt: null,
-});
-
 const rowsFor = (body: Record<string, unknown>) =>
   parseDocument(doc({ privacyPartners: [body] })).sections[0]!.rows;
 
@@ -253,16 +237,6 @@ describe('the warnings reach a real plan', () => {
 
 /* ── ForgeDeck's FIFTH report, 2026-11-06 items 3 and 4 ────────────────── */
 
-/** A live row for a provider somebody HAS opted into, with both halves stored. */
-const bound = (over: Record<string, unknown> = {}) => ({
-  ...unbound(),
-  enabled: true,
-  cbid: 'cb_live_1',
-  completionsUrl: 'https://api.cookiemunch.net/v1/stored',
-  completionSecretSet: true,
-  ...over,
-});
-
 /** Warnings for one document against an explicit live list. */
 function against(
   body: Record<string, unknown>,
@@ -458,50 +432,59 @@ describe('what `plan` says a write will REPLACE', () => {
   });
 });
 
-describe('refused rows are counted, not just described', () => {
+describe('an empty completionsUrl is a value, not an absence', () => {
+  const SEC = 'whsec_abcdefghijklmnop';
   /*
-   * ForgeDeck item 3: seven unapplyable documents each planned as `0 that
-   * cannot be applied` and exited 2 — the code a GOOD change exits — so
-   * nothing downstream could tell a ready change from a doomed one.
+   * ForgeDeck's sixth report, item 2, reproduced twice: `completionsUrl: ''`
+   * planned with NO warning and exited 2, then `apply` failed with
+   * `completionsUrl: Invalid url`. The guard was `typeof url !== 'string' ||
+   * url === ''`, so an empty string skipped every URL rule below it.
    */
-  it('counts a row the server will refuse', () => {
-    const parsed = parseDocument(doc({ privacyPartners: [{ provider: 'cookiemunch' }] }));
-    const plan = buildPlan(parsed, live({ privacyPartners: [unbound()] }));
+  it('warns and refuses an empty string', () => {
+    const w = against(
+      { provider: 'cookiemunch', cbid: 'x', completionsUrl: '', completionSecret: SEC },
+      [unbound()],
+    );
+    expect(w.some((x) => x.includes('public https URL'))).toBe(true);
+  });
+
+  it('counts it as refused so --exit-code answers 3', () => {
+    const plan = buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [
+            { provider: 'cookiemunch', cbid: 'x', completionsUrl: '', completionSecret: SEC },
+          ],
+        }),
+      ),
+      live({ privacyPartners: [unbound()] }),
+    );
     expect(plan.refused).toEqual(['cookiemunch']);
   });
 
-  it('counts a row ONCE even when it breaks several rules', () => {
-    const parsed = parseDocument(
-      doc({
-        privacyPartners: [
-          { provider: 'cookiemunch', completionsUrl: 'nope', completionSecret: 'x' },
-        ],
-      }),
-    );
-    const plan = buildPlan(parsed, live({ privacyPartners: [unbound()] }));
-    expect(plan.refused).toEqual(['cookiemunch']);
+  /*
+   * `null` is the DOCUMENTED off switch and must stay silent. A presence test
+   * written as truthiness is what broke the empty string; written as `!= null`
+   * it would break this, so both directions are pinned.
+   */
+  it('stays silent on null, which is the off switch', () => {
+    const w = against({ provider: 'cookiemunch', cbid: 'cb_live_1', completionsUrl: null }, [
+      bound(),
+    ]);
+    expect(w.some((x) => x.includes('public https URL'))).toBe(false);
+    expect(w).toEqual([]);
   });
 
-  /* An unlisted provider is a 404 at the PUT, and its warning is section-level. */
-  it('counts a provider the server does not list', () => {
-    const parsed = parseDocument(doc({ privacyPartners: [{ provider: 'nope', cbid: 'x' }] }));
-    const plan = buildPlan(parsed, live({ privacyPartners: [unbound()] }));
-    expect(plan.refused).toEqual(['nope']);
-  });
-
-  it('is empty for a document the server will accept', () => {
-    const parsed = parseDocument(
-      doc({
-        privacyPartners: [
-          {
-            provider: 'cookiemunch',
-            cbid: 'c',
-            completionsUrl: URL_OK,
-            completionSecret: 'whsec_abcdefghijklmnop',
-          },
-        ],
-      }),
+  it('plans null as an applyable update', () => {
+    const plan = buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [{ provider: 'cookiemunch', cbid: 'cb_live_1', completionsUrl: null }],
+        }),
+      ),
+      live({ privacyPartners: [bound()] }),
     );
-    expect(buildPlan(parsed, live({ privacyPartners: [unbound()] })).refused).toEqual([]);
+    expect(plan.items[0]?.action).toBe('update');
+    expect(plan.refused).toEqual([]);
   });
 });

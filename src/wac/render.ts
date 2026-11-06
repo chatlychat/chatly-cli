@@ -101,10 +101,20 @@ export function renderPlan(plan: Plan, opts: RenderOptions): string {
     out.push('  (the document declares no resources)');
   }
 
+  /*
+   * `blocked` and `refused` are added, and the two footer lines keep them
+   * apart. ForgeDeck's sixth report, 2026-11-06 item 3: a refused document
+   * read `1 to create … 0 that cannot be applied`, and someone reading the
+   * first line runs `apply`. From the reader's seat both are "cannot be
+   * applied" — this CLI will not send one, the server will not accept the
+   * other — so the SUMMARY is the wrong place to make that distinction and
+   * the footer is the right one. Safe to add because `blocked` is an action
+   * and `refusedRowKeys` only counts `create`/`update`, so nothing is in both.
+   */
   const summary =
     `${String(counts.create)} to create, ${String(counts.update)} to change, ` +
     `${String(counts.noop)} unchanged, ${String(counts.orphan)} on the server only, ` +
-    `${String(counts.blocked)} that cannot be applied`;
+    `${String(counts.blocked + plan.refused.length)} that cannot be applied`;
 
   const parts = [`Plan: ${summary}`, '', ...out];
 
@@ -129,8 +139,20 @@ export function renderPlan(plan: Plan, opts: RenderOptions): string {
 export function planFooter(plan: Plan, opts: RenderOptions): string {
   const counts = tally(plan);
   const lines = ['', 'Nothing was written — `plan` issues reads only.'];
-  if (counts.create + counts.update === 0 && (counts.orphan === 0 || !opts.prune)) {
-    lines.push('There is nothing to apply.');
+  /*
+   * Telling someone to run `apply` when every change in the plan will be
+   * refused is the line they act on before reading the warning underneath it
+   * (ForgeDeck's sixth report, item 3). `>=` rather than `===` because a
+   * section-level refusal can name a key twice.
+   */
+  const changing = counts.create + counts.update;
+  const allRefused = changing > 0 && plan.refused.length >= changing;
+  if ((changing === 0 || allRefused) && (counts.orphan === 0 || !opts.prune)) {
+    lines.push(
+      allRefused
+        ? 'There is nothing to apply that the server would accept — fix the documents below.'
+        : 'There is nothing to apply.',
+    );
   } else {
     lines.push(
       `Run \`chatly apply\`${opts.prune ? ' --prune' : ''} to make ` +
@@ -195,5 +217,8 @@ export function planForJson(plan: Plan): unknown {
     })),
     warnings: plan.warnings,
     pruneUnsafe: plan.pruneUnsafe,
+    // Top level, because the reason is prose inside `warnings` and a script
+    // had only the exit code to go on (ForgeDeck's sixth report, item 3).
+    refused: plan.refused,
   };
 }

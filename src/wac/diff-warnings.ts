@@ -9,7 +9,7 @@
  */
 import { looksLikeCredential, normalizedKey, projected, type ResourceDef } from './resources.js';
 
-import type { LiveIndex, LiveSection } from './diff.js';
+import type { LiveIndex, LiveSection, PlanItem } from './diff.js';
 import type { DocumentRow } from './document.js';
 
 /* ── Warnings ─────────────────────────────────────────────────────────── */
@@ -255,13 +255,41 @@ export function fullReplaceWarnings(def: ResourceDef): ReadonlyArray<string> {
  * `unknownKeyWarnings` is a refusal too (the PUT answers 404) and it aggregates
  * every unlisted key into ONE section-level message, so its rows are added from
  * the same `allKeys` test it uses rather than from its text.
+ *
+ * ─── ONLY ROWS `apply` WOULD SEND ─────────────────────────────────────────
+ *
+ * It takes the PLAN ITEMS, not the document rows, and keeps only `create` and
+ * `update`. ForgeDeck's sixth report (2026-11-06 item 1), reproduced twice: a
+ * document carrying a `completionSecret` and no `completionsUrl` against a live
+ * row whose completions are already off planned `unchanged` — a secret is a
+ * credential, so `looksLikeCredential` keeps it out of the diff — and `plan`
+ * printed `REFUSED` and exited 3 while `apply` sent nothing and exited 0.
+ *
+ * The warning itself is still right and still printed: a secret sitting in a
+ * document with nowhere to report is worth saying. What was wrong was calling
+ * it a refusal, because the server never sees it. A `REFUSED` line on a
+ * document that applies cleanly teaches the reader to ignore the line, which
+ * is the same argument the `completionsUrl`-with-a-stored-secret warning was
+ * removed on one report earlier.
+ *
+ * `blocked` is an ACTION, so a row is never both blocked and refused — which
+ * is what lets the summary add the two counts without double-counting.
  */
 export function refusedRowKeys(
   def: ResourceDef,
-  rows: ReadonlyArray<DocumentRow>,
+  items: ReadonlyArray<PlanItem>,
   live: LiveSection,
   messages: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
+  const rows: DocumentRow[] = [];
+  for (const item of items) {
+    if (item.type !== def.type || item.row === undefined) {
+      continue;
+    }
+    if (item.action === 'create' || item.action === 'update') {
+      rows.push(item.row);
+    }
+  }
   const out = new Set<string>();
   for (const row of rows) {
     if (messages.some((m) => m.startsWith(rowPrefix(def, row.key)))) {

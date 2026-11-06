@@ -190,7 +190,16 @@ export const PRIVACY_PARTNERS: ResourceDef =
           );
         }
 
-        if (typeof url !== 'string' || url === '') {
+        /*
+         * PRESENCE, not truthiness. `null` is the documented off switch and
+         * must stay silent; `''` is a value the route refuses
+         * (`completionsUrl: Invalid url`) and used to skip every check below
+         * it, so `plan` exited 2 and `apply` then failed — ForgeDeck's sixth
+         * report, 2026-11-06 item 2, reproduced twice. An empty string now
+         * falls through to `new URL('')`, which throws, which is the same
+         * "must be a public https URL" the server answers for `not a url`.
+         */
+        if (typeof url !== 'string') {
           continue;
         }
 
