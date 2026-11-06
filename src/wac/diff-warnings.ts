@@ -7,7 +7,7 @@
  * with no natural key, a key on two rows, a field no live row carries — and
  * the plan is the same with or without them.
  */
-import { looksLikeCredential, projected, type ResourceDef } from './resources.js';
+import { looksLikeCredential, normalizedKey, projected, type ResourceDef } from './resources.js';
 
 import type { LiveIndex, LiveSection } from './diff.js';
 import type { DocumentRow } from './document.js';
@@ -49,8 +49,45 @@ export function sectionWarnings(
     );
   }
 
+  out.push(...unknownKeyWarnings(def, rows, live.allKeys));
   out.push(...vocabularyWarnings(def, rows, live.rows));
   return out;
+}
+
+/**
+ * A key the server's own enumeration does not contain.
+ *
+ * ForgeDeck 2026-11-05 item 4, reproduced twice: a document naming the
+ * provider `nope` planned as `create` and exited 0, and the PUT then answered
+ * `404 Privacy partner not found` — a plan that said yes to the one thing it
+ * could have said no to, with the evidence already in hand. `GET
+ * /v1/privacy/partners` returns the whole registry, so an unlisted provider is
+ * not a guess.
+ *
+ * Only for a resource with an `existsWhen`, because only there does the list
+ * route enumerate more than the workspace holds. Everywhere else an absent key
+ * is exactly what a create is FOR, and warning would fire on every new row.
+ */
+export function unknownKeyWarnings(
+  def: ResourceDef,
+  rows: ReadonlyArray<DocumentRow>,
+  allKeys: ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> {
+  if (def.existsWhen === undefined || allKeys === undefined || allKeys.length === 0) {
+    return [];
+  }
+  const known = new Set(allKeys);
+  const missing = rows
+    .map((r) => r.key)
+    .filter((k) => k !== '' && !known.has(normalizedKey(def, k)));
+  if (missing.length === 0) {
+    return [];
+  }
+  return [
+    `${def.type}: ${missing.map((k) => `"${k}"`).join(', ')} — this server lists no ${def.label} ` +
+      `by that ${def.naturalKey}, so the write will 404. It offers: ` +
+      `${[...known].sort().join(', ')}.`,
+  ];
 }
 
 /**

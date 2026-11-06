@@ -87,7 +87,13 @@
  */
 
 export type { Action, ResourceDef, ResourceRef, UpdateRoute } from './resource-def.js';
-export { looksLikeCredential, normalizedKey, projected, routeForField } from './resource-def.js';
+export {
+  looksLikeCredential,
+  naturalKeys,
+  normalizedKey,
+  projected,
+  routeForField,
+} from './resource-def.js';
 
 import { SERVER_OWNED } from './resource-shared.js';
 import { PRIVACY_PARTNERS } from './resources-privacy.js';

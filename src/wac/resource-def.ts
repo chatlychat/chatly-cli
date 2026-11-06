@@ -204,6 +204,27 @@ export function addressOf(parentKey: string, childKey: string): string {
 }
 
 /** The server's spelling of a key, for matching. */
+/**
+ * Every natural key in a list answer, normalised, skipping rows that have none.
+ *
+ * Used on the UNFILTERED answer of an `existsWhen` resource, so the plan can
+ * tell "the server has no such thing" from "the server has it and nobody has
+ * opted in" — two outcomes `existsWhen` deliberately collapses into one.
+ */
+export function naturalKeys(
+  def: ResourceDef,
+  rows: ReadonlyArray<Record<string, unknown>>,
+): string[] {
+  const out: string[] = [];
+  for (const row of rows) {
+    const key = row[def.naturalKey];
+    if (typeof key === 'string' && key.length > 0) {
+      out.push(normalizedKey(def, key));
+    }
+  }
+  return out;
+}
+
 export function normalizedKey(def: ResourceDef, key: string): string {
   return def.normalizeKey === undefined ? key : def.normalizeKey(key);
 }

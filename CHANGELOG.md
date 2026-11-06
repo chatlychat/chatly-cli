@@ -1,5 +1,26 @@
 # @chatlychat/cli — changelog
 
+## 0.9.3 — 2026-11-05
+
+- **`chatly apply` could not create a privacy-partner opt-in, which was the
+  entire job of the resource 0.9.2 added.** The create arm sent the natural key
+  in the body; `PUT /v1/privacy/partners/{provider}` validates with a `.strict()`
+  body, so every FIRST opt-in was a 400 — and only the first, since the update
+  arm had always dropped the key. This is the only resource with a `PUT` create,
+  so no other one could expose it. A document that already held an enabled
+  partner applied fine, which is why it survived a release.
+- **`chatly plan` now warns on a provider the server does not list**, instead of
+  planning a create that answers `404 Privacy partner not found`. `GET
+/v1/privacy/partners` returns the whole registry, so an unlisted provider is
+  not a guess — the plan had the evidence in hand and said yes anyway.
+- **`chatly apply` now prints WHY a write was refused.** It reported only
+  `Invalid request body`; it now reads `details.issues[].path` / `.message` off
+  the error body and names the field, reading `keys` for an `unrecognized_keys`
+  issue whose `path` is empty and would otherwise name nothing.
+- **The platform document refuses workspace resource types by name.** All twelve
+  of them, derived from `RESOURCE_TYPES` rather than listed, with a message
+  pointing at `chatly plan` / `chatly apply` and a `ck_` key.
+
 ## 0.9.2 — 2026-11-05
 
 - **`chatly doctor` now prints the workspace readiness report.** The code

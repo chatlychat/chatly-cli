@@ -48,7 +48,7 @@ import { WORKSPACE_SCHEMA, type WacDocument } from '../wac/document.js';
 import { execute } from '../wac/execute.js';
 import { loadFrom } from '../wac/load.js';
 import { planFooter, planForJson, renderPlan } from '../wac/render.js';
-import { resourceDef } from '../wac/resources.js';
+import { naturalKeys, resourceDef } from '../wac/resources.js';
 
 import type { ChatlyClient, Page } from '@chatlychat/sdk-node';
 
@@ -126,6 +126,7 @@ export async function readLive(
       out.set(def.type, {
         rows:
           def.existsWhen === undefined ? rows : rows.filter((r) => def.existsWhen?.(r) === true),
+        ...(def.existsWhen === undefined ? {} : { allKeys: naturalKeys(def, rows) }),
       });
       continue;
     }
@@ -138,7 +139,11 @@ export async function readLive(
      */
     const rows =
       def.existsWhen === undefined ? all : all.filter((r) => def.existsWhen?.(r) === true);
-    out.set(def.type, { rows, possiblyTruncated: all.length >= EXEMPT_LIST_CAP });
+    out.set(def.type, {
+      rows,
+      possiblyTruncated: all.length >= EXEMPT_LIST_CAP,
+      ...(def.existsWhen === undefined ? {} : { allKeys: naturalKeys(def, all) }),
+    });
   }
   return out;
 }

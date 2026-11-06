@@ -9,11 +9,12 @@ import { describe, expect, it } from 'vitest';
 
 import { APPLY, def, doc, live } from './__tests__/wac-fixtures.js';
 import { writesFor } from './apply.js';
+import { unknownKeyWarnings } from './diff-warnings.js';
 import { buildPlan } from './diff.js';
 import { parseDocument } from './document.js';
 import { resourceDef } from './resources.js';
 
-const OPT_IN = { provider: 'cookie_munch', cbid: 'cb_live_1' };
+const OPT_IN = { provider: 'cookiemunch', cbid: 'cb_live_1' };
 
 /** A registry row for a provider nobody has opted into. */
 const unbound = (provider: string) => ({
@@ -37,9 +38,14 @@ describe('the opt-in is created with a PUT, not a POST', () => {
     expect(writesFor(def('privacyPartners'), plan.items[0]!, new Map(), APPLY)).toEqual([
       {
         method: 'PUT',
-        path: '/v1/privacy/partners/cookie_munch',
-        // The key is in the PATH, and the body is the opt-in minus it.
-        body: { provider: 'cookie_munch', cbid: 'cb_live_1' },
+        path: '/v1/privacy/partners/cookiemunch',
+        /*
+         * The key is in the PATH and NOT in the body. The route's body is
+         * `.strict()`, so a `provider` key here is a 400 and the opt-in
+         * cannot be created at all — ForgeDeck 2026-11-05 item 1, which this
+         * test shipped asserting rather than catching.
+         */
+        body: { cbid: 'cb_live_1' },
       },
     ]);
   });
@@ -48,11 +54,11 @@ describe('the opt-in is created with a PUT, not a POST', () => {
     const parsed = parseDocument(doc({ privacyPartners: [{ ...OPT_IN, cbid: 'cb_live_2' }] }));
     const plan = buildPlan(
       parsed,
-      live({ privacyPartners: [{ ...unbound('cookie_munch'), enabled: true, cbid: 'cb_live_1' }] }),
+      live({ privacyPartners: [{ ...unbound('cookiemunch'), enabled: true, cbid: 'cb_live_1' }] }),
     );
     const ops = writesFor(def('privacyPartners'), plan.items[0]!, new Map(), APPLY);
     expect(ops[0]?.method).toBe('PUT');
-    expect(ops[0]?.path).toBe('/v1/privacy/partners/cookie_munch');
+    expect(ops[0]?.path).toBe('/v1/privacy/partners/cookiemunch');
   });
 });
 
@@ -74,8 +80,8 @@ describe('the registry row is not an existing resource', () => {
   it('is the filter the fetch applies, and it selects on `enabled`', () => {
     const d = resourceDef('privacyPartners');
     expect(d?.existsWhen).toBeDefined();
-    expect(d?.existsWhen?.(unbound('cookie_munch'))).toBe(false);
-    expect(d?.existsWhen?.({ ...unbound('cookie_munch'), enabled: true })).toBe(true);
+    expect(d?.existsWhen?.(unbound('cookiemunch'))).toBe(false);
+    expect(d?.existsWhen?.({ ...unbound('cookiemunch'), enabled: true })).toBe(true);
   });
 });
 
@@ -96,5 +102,49 @@ describe('the completion secret is never rewritten blind', () => {
   /* A PUT with no `completionsUrl` CLEARS it, so a plan has to warn. */
   it('is a full replace, so an omitted field is a change', () => {
     expect(resourceDef('privacyPartners')?.fullReplace).toBe(true);
+  });
+});
+
+describe('a provider the server does not list is caught at plan time', () => {
+  /*
+   * ForgeDeck 2026-11-05 item 4, reproduced twice: a document naming the
+   * provider `nope` planned as `create`, `plan` exited 0, and the PUT then
+   * answered `404 Privacy partner not found`. `GET /v1/privacy/partners`
+   * returns the whole REGISTRY, so the plan had the evidence in hand and
+   * `existsWhen` was throwing it away — the filter that makes a create
+   * plannable also hides the difference between "not opted in" and "no such
+   * provider". `allKeys` carries the pre-filter list for exactly this.
+   */
+  const rows = parseDocument(doc({ privacyPartners: [{ provider: 'nope', cbid: 'x' }] }))
+    .sections[0]!.rows;
+
+  it('warns, naming the provider and what the server offers', () => {
+    const [warning, ...rest] = unknownKeyWarnings(def('privacyPartners'), rows, [
+      'cookiemunch',
+      'osano',
+    ]);
+    expect(rest).toEqual([]);
+    expect(warning).toContain('"nope"');
+    expect(warning).toContain('404');
+    expect(warning).toContain('cookiemunch, osano');
+  });
+
+  it('is silent on a provider that IS listed but not enabled', () => {
+    const listed = parseDocument(doc({ privacyPartners: [OPT_IN] })).sections[0]!.rows;
+    expect(unknownKeyWarnings(def('privacyPartners'), listed, ['cookiemunch'])).toEqual([]);
+  });
+
+  /*
+   * Only for an `existsWhen` resource. Everywhere else an absent key is what a
+   * create is FOR, so this would fire on every new row — and with no list at
+   * all (a server that answered nothing) there is no evidence to warn on.
+   */
+  it('is silent for a resource whose list route holds only what exists', () => {
+    expect(unknownKeyWarnings(def('bots'), rows, ['something'])).toEqual([]);
+  });
+
+  it('is silent when the pre-filter list is absent or empty', () => {
+    expect(unknownKeyWarnings(def('privacyPartners'), rows, undefined)).toEqual([]);
+    expect(unknownKeyWarnings(def('privacyPartners'), rows, [])).toEqual([]);
   });
 });

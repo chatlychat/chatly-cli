@@ -187,11 +187,23 @@ export function writesFor(
      * yet and fills `{id}` with '' as before.
      */
     const method = def.create.method ?? 'POST';
+    const body: Record<string, unknown> = { ...item.row.body, ...wired };
+    /*
+     * ForgeDeck 2026-11-05 item 1: a PUT create carries the natural key in
+     * the PATH, and `PUT /v1/privacy/partners/{provider}` validates with a
+     * `.strict()` body — so sending `provider` as well is a 400 and the
+     * opt-in could never be created, which is the whole job of the resource.
+     * The update branch below has always dropped it (see `wanted`); this is
+     * the same rule for the arm that reaches a brand-new row.
+     */
+    if (method === 'PUT') {
+      delete body[def.naturalKey];
+    }
     return [
       {
         method,
         path: fill(def.create.path, method === 'PUT' ? item.row.key : '', pathWired),
-        body: { ...item.row.body, ...wired },
+        body,
       },
     ];
   }

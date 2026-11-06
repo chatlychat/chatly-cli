@@ -34,6 +34,18 @@ export const PRIVACY_PARTNERS: ResourceDef =
    * `completionSecret` is a `whsec_` secret and never reads back, so it is
    * listed in `secrets` AND `opaque`: a plan cannot tell whether it changed,
    * and says so rather than rewriting it on every apply.
+   *
+   * `opaque` does all the work; `secrets` is DEFENSIVE and inert here.
+   * `harvestSecrets` scans a write RESPONSE, and this route answers
+   * `privacyPartnerBindingSchema` — which carries `completionSecretSet`, a
+   * boolean, and never the secret. It cannot: this value is an INPUT the
+   * operator holds (the partner's own `whsec_`), not something Chatly mints.
+   * ForgeDeck read the `secrets` entry as a promise that `apply` would print a
+   * one-time secret and reported its absence. The one-time credential a
+   * cutover actually needs comes from
+   * `POST /v1/privacy/partners/{provider}/{externalId}/executor-key` — a
+   * different route, and setup.md step 4. Kept listed so the banner would fire
+   * if the response shape ever grew one.
    */
   {
     type: 'privacyPartners',

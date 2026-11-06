@@ -120,6 +120,12 @@ export interface LiveSection {
   readonly rows: ReadonlyArray<Record<string, unknown>>;
   /** The route caps its answer and the answer came back at the cap. */
   readonly possiblyTruncated?: boolean;
+  /**
+   * Natural keys returned BEFORE `existsWhen` filtered them, for the
+   * `existsWhen` resources only — see `unknownKeyWarnings`, which is the one
+   * reader. A key absent here is one the server has never heard of.
+   */
+  readonly allKeys?: ReadonlyArray<string>;
 }
 
 /* ── Live indexing ────────────────────────────────────────────────────── */

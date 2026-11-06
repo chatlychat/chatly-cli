@@ -98,6 +98,7 @@
  */
 
 import { addressOf, type ResourceDef } from '../wac/resource-def.js';
+import { RESOURCE_TYPES } from '../wac/resources.js';
 
 export { addressOf } from '../wac/resource-def.js';
 
@@ -518,6 +519,28 @@ export const REFUSED_KEYS: Readonly<Record<string, string>> = {
     'mint response and nowhere else, `GET /v1/platform/login_links` carries neither token nor ' +
     'hash, and anything declarative would mint a fresh one on every apply. Use `chatly api ' +
     'POST /v1/platform/login_links`.',
+  /*
+   * Every WORKSPACE resource type, pointing at the command that owns it.
+   *
+   * ForgeDeck 2026-11-05 item 5, reproduced twice: `chatly platform plan
+   * --file pp.json` on a workspace document answered `unknown resource type
+   * "privacyPartners". Valid: workspaces, users, …`, which sends the reader
+   * hunting for a spelling mistake in a name that is spelled correctly and
+   * belongs to the other document. Exactly what this table is for.
+   *
+   * Derived from `RESOURCE_TYPES` rather than listed, so a tenth workspace
+   * resource gets the pointer without anyone remembering to add it here —
+   * which is the failure mode a hand-written copy of another module's list
+   * has every time.
+   */
+  ...Object.fromEntries(
+    RESOURCE_TYPES.map((type) => [
+      type,
+      `\`${type}\` is a WORKSPACE resource, not a platform one. It is declared in ` +
+        '`chatly.json` and applied with `chatly plan` / `chatly apply` against a `ck_` key. ' +
+        'This document is the platform one: it provisions tenants with a `cp_` credential.',
+    ]),
+  ),
 };
 
 /** Every key `resources:` accepts, including the ones it refuses by name. */

@@ -108,7 +108,7 @@ export async function execute(
         outcomes.push({
           ...base(item),
           state: 'failed',
-          detail: `${op.method} ${op.path} — ${err instanceof Error ? err.message : String(err)}`,
+          detail: `${op.method} ${op.path} — ${describeWriteFailure(err)}`,
           secrets,
         });
         break;
@@ -150,4 +150,55 @@ function idOf(response: unknown, def: ResourceDef): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * The failure line, with the FIELD the server named.
+ *
+ * ForgeDeck 2026-11-05 item 4, reproduced twice: a 400 printed only
+ * `Invalid request body`, so a document with a missing `cbid` or a key the
+ * route refuses gave no clue which field was wrong — the one piece of
+ * information that makes the error actionable. The API has always sent it:
+ * `ZodValidationPipe` throws `ValidationError('Invalid request body',
+ * { issues })` and the filter puts that on the wire as
+ * `{ error: { message, details: { issues } } }`.
+ *
+ * Read off `ChatlyApiError.body` (the raw response text) rather than by
+ * teaching the SDK a new field, because `body` is already the SDK's documented
+ * escape hatch for "everything `code`/`message` could not represent", and
+ * every one of the eight SDKs would otherwise need the same field.
+ *
+ * Silent on anything it cannot read: a transport error, a non-JSON body and a
+ * 500 all keep the plain message. A failure line that invents structure it did
+ * not find is worse than a terse one.
+ */
+export function describeWriteFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const raw = (err as { body?: unknown } | null)?.body;
+  if (typeof raw !== 'string' || raw === '') {
+    return message;
+  }
+  let issues: unknown;
+  try {
+    issues = (JSON.parse(raw) as { error?: { details?: { issues?: unknown } } })?.error?.details
+      ?.issues;
+  } catch {
+    return message;
+  }
+  if (!Array.isArray(issues) || issues.length === 0) {
+    return message;
+  }
+  const named = issues
+    .map((i) => {
+      const issue = i as { path?: unknown; message?: unknown; keys?: unknown };
+      const text = typeof issue.message === 'string' ? issue.message : 'invalid';
+      // `unrecognized_keys` carries the offending names in `keys` and an EMPTY
+      // `path`, so the path alone would print the object and name no field.
+      const keys = Array.isArray(issue.keys) ? issue.keys.map(String) : [];
+      const path = Array.isArray(issue.path) ? issue.path.map(String) : [];
+      const where = keys.length > 0 ? keys.join(', ') : path.join('.');
+      return where === '' ? text : `${where}: ${text}`;
+    })
+    .join('; ');
+  return `${message} (${named})`;
 }
