@@ -192,6 +192,21 @@ export interface ResourceDef {
   readonly extraWarnings?: (
     rows: ReadonlyArray<{ key: string; body: Record<string, unknown> }>,
     liveRows: ReadonlyArray<Record<string, unknown>>,
+    /*
+     * Whether `apply` will SEND this row, by document key (normalized for
+     * you). A rule that predicts a server refusal has to know this, because
+     * an unchanged row is never sent and so is never refused: ForgeDeck's
+     * seventh report, 2026-11-06 item 2, reproduced twice — a warning said
+     * "the server refuses it" about a row `apply` exits 0 on without
+     * contacting the server. It is the same mistake the SIXTH report's item 1
+     * found in the refusal COUNT; the count was fixed and the wording beside
+     * it was left saying the old thing.
+     *
+     * Note `--write-only` flips it: credentials are sent then, so the row
+     * does change and the server does refuse it. That is why this is the real
+     * plan action and not "does the row differ from live".
+     */
+    willSend: (key: string) => boolean,
   ) => ReadonlyArray<string>;
   /** The live row, reshaped into the vocabulary the document writes. */
   readonly project?: (row: Record<string, unknown>) => Record<string, unknown>;

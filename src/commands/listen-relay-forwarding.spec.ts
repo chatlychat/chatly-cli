@@ -32,12 +32,7 @@ import {
   type Answer,
   type Call,
 } from './listen-relay-harness.js';
-import {
-  RELAY_IDLE_TIMEOUT_MS,
-  answerFrame,
-  relay,
-  type RelayFrame,
-} from './listen-relay.js';
+import { RELAY_IDLE_TIMEOUT_MS, answerFrame, relay, type RelayFrame } from './listen-relay.js';
 
 import type { ListenDeps } from './listen-core.js';
 

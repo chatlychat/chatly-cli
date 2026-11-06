@@ -245,22 +245,44 @@ export function buildPlan(
     }
     known.set(def.type, ids);
 
-    warnings.push(...sectionWarnings(def, section.rows, liveSection, index));
     if (liveSection.possiblyTruncated === true) {
       pruneUnsafe.push(def.type);
     }
 
     const declared = new Set<string>();
+    const sendable = new Set<string>();
     for (const row of section.rows) {
       const norm = normalizedKey(def, row.key);
       declared.add(norm);
       const item = planRow(def, row, norm, index, known, opts);
       items.push(item);
+      if (item.action === 'create' || item.action === 'update') {
+        sendable.add(norm);
+      }
       if (item.action === 'create') {
         // A later section may reference it; the id is unknown until apply.
         ids.set(norm, null);
       }
     }
+
+    /*
+     * Warnings are produced AFTER the rows are planned, because a rule that
+     * predicts a server refusal has to know whether `apply` will send the row
+     * at all. It used to run before this loop, and said "the server refuses
+     * it" about a document `apply` exits 0 on without a single write —
+     * ForgeDeck's seventh report, item 2. The SIXTH report's item 1 was the
+     * same mistake one field over, in `refusedRowKeys`, and moving that call
+     * is exactly what fixed it.
+     *
+     * Output order is unchanged: every warning for this section, section-level
+     * and per-row alike, is still emitted as one block before the next
+     * section's, and nothing in `planRow` reads `warnings`.
+     */
+    warnings.push(
+      ...sectionWarnings(def, section.rows, liveSection, index, (key) =>
+        sendable.has(normalizedKey(def, key)),
+      ),
+    );
     refused.push(...refusedRowKeys(def, items, liveSection, warnings));
 
     for (const [key, row] of index.byKey) {

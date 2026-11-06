@@ -176,23 +176,39 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
   const after = await planAgainstLive(chatly, doc, writeOnly);
   const mismatches = unverified(after, opts.prune);
 
+  /*
+   * A failed row cannot be confirmed by a read-back, and saying "everything
+   * matches" beside "nothing was written for these" is a straight
+   * contradiction — ForgeDeck's seventh report, 2026-11-06 item 2, reproduced
+   * twice. The read-back re-plans WITHOUT `--write-only` (anything else
+   * reports every opaque field as a change for ever), so a write-only value
+   * that failed to be written is not compared at all and the plan comes back
+   * clean. The exit code was already 1; only the sentence lied.
+   *
+   * `verified` in `--json` carried the same claim and is corrected with it: a
+   * script reading `verified: true` off a run that failed is this defect in
+   * the form that gets acted on automatically.
+   */
+  const failed = outcomes.some((o) => o.state === 'failed' || o.state === 'skipped');
   if (json) {
     printJson({
       outcomes,
       warnings: built.warnings,
-      verified: mismatches.length === 0,
+      verified: mismatches.length === 0 && !failed,
       mismatches,
     });
   } else {
     process.stdout.write(renderOutcomes(outcomes));
     process.stdout.write(
-      mismatches.length === 0
-        ? '\nRead back: everything matches the document.\n'
-        : `\nRead back: ${String(mismatches.length)} item(s) still differ from the document:\n` +
-            mismatches.map((m) => `  ${m}\n`).join(''),
+      mismatches.length > 0
+        ? `\nRead back: ${String(mismatches.length)} item(s) still differ from the document:\n` +
+            mismatches.map((m) => `  ${m}\n`).join('')
+        : failed
+          ? '\nRead back: the rows that were written match the document. The failed row(s) ' +
+            'above are NOT confirmed — a write-only value cannot be read back.\n'
+          : '\nRead back: everything matches the document.\n',
     );
   }
-  const failed = outcomes.some((o) => o.state === 'failed' || o.state === 'skipped');
   return failed || mismatches.length > 0 ? 1 : 0;
 }
 

@@ -43,27 +43,31 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
     return 2;
   }
 
-  const checks = await runChecks(channels, { origin }, {
-    fetchFn: fetch,
-    presign: async () => {
-      const res = await chatly.request<{ url?: unknown }>('POST', '/v1/uploads/presign', {
-        body: {
-          filename: 'chatly-doctor-probe.png',
-          contentType: 'image/png',
-          sizeBytes: 1,
-        },
-      });
-      const { url } = res;
-      if (typeof url !== 'string') {
-        throw new Error('the presign response carried no `url`');
-      }
-      return url;
+  const checks = await runChecks(
+    channels,
+    { origin },
+    {
+      fetchFn: fetch,
+      presign: async () => {
+        const res = await chatly.request<{ url?: unknown }>('POST', '/v1/uploads/presign', {
+          body: {
+            filename: 'chatly-doctor-probe.png',
+            contentType: 'image/png',
+            sizeBytes: 1,
+          },
+        });
+        const { url } = res;
+        if (typeof url !== 'string') {
+          throw new Error('the presign response carried no `url`');
+        }
+        return url;
+      },
+      health: async () => {
+        const res = await chatly.request<{ checks?: unknown }>('GET', '/v1/integration-health');
+        return Array.isArray(res.checks) ? (res.checks as readonly unknown[]) : [];
+      },
     },
-    health: async () => {
-      const res = await chatly.request<{ checks?: unknown }>('GET', '/v1/integration-health');
-      return Array.isArray(res.checks) ? (res.checks as readonly unknown[]) : [];
-    },
-  });
+  );
 
   // Advisory: an older deployment without the route must not break the rest of doctor.
   try {

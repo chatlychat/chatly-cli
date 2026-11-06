@@ -1,5 +1,31 @@
 # @chatlychat/cli — changelog
 
+## 0.9.7 — 2026-11-06
+
+ForgeDeck's seventh report. Both items are `plan` and `apply` describing what
+they actually did.
+
+- **A wrong JSON type is caught by `plan`, not by `apply`.** `completionsUrl: 5`
+  (or `true`, `[]`, `{}`) and `completionSecret: 5` planned with no warning,
+  `0 that cannot be applied` and exit 2; `apply` then exited 1 with `Expected
+string, received number`. Only `cbid` was type-checked — the other two
+  guarded with `typeof x === 'string'`, which skips a wrong type instead of
+  reporting it. All three now warn and exit 3, naming the type the way the
+  route does (an array is `array`, not `object`). `completionsUrl: null`
+  remains the documented off switch and stays silent.
+- **A stray `completionSecret` on an unchanged row no longer claims the server
+  refused it.** Nothing is sent on that run, so there is no refusal; it now
+  reads `this secret is not sent — there is no completionsUrl for it to sign`.
+  Under `--write-only` the secret IS sent and the server does refuse it, and
+  that wording is unchanged.
+- **`apply` no longer reports an all-clear read-back after a failed write.** It
+  printed `Failed (1) — nothing was written for these` and then `Read back:
+everything matches the document.`, because the read-back re-plans without
+  `--write-only` and so cannot see a credential that failed to be written. It
+  now says the failed rows are NOT confirmed, and `--json` reports
+  `verified: false`. Fixed for `chatly platform apply` too, which had the same
+  two lines and was not reported.
+
 ## 0.9.6 — 2026-11-06
 
 ForgeDeck's sixth report. All three are `plan` telling the truth about what

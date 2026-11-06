@@ -74,7 +74,10 @@ export function parsePolicies(raw: string): CspPolicy[] {
   for (const chunk of raw.split(',')) {
     const map = new Map<string, readonly string[]>();
     for (const part of chunk.split(';')) {
-      const tokens = part.trim().split(/\s+/u).filter((t) => t.length > 0);
+      const tokens = part
+        .trim()
+        .split(/\s+/u)
+        .filter((t) => t.length > 0);
       const name = tokens[0];
       if (name === undefined) {
         continue;

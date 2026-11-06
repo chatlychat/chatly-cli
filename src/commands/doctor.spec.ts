@@ -220,17 +220,29 @@ describe('upload.preflight — the check that earns the command', () => {
   });
 
   it('warns rather than failing when the key cannot presign, and names the scope', async () => {
-    const { check: c } = await check('upload.preflight', [channelRow()], HEALTHY, {}, {
-      presign: () => Promise.reject(new Error('Missing permission: uploads:create')),
-    });
+    const { check: c } = await check(
+      'upload.preflight',
+      [channelRow()],
+      HEALTHY,
+      {},
+      {
+        presign: () => Promise.reject(new Error('Missing permission: uploads:create')),
+      },
+    );
     expect(c.verdict).toBe('warn');
     expect(c.fix).toContain('uploads:create');
   });
 
   it('warns when the deployment has no object storage at all', async () => {
-    const { check: c } = await check('upload.preflight', [channelRow()], HEALTHY, {}, {
-      presign: async () => 'data:no-s3-configured;key=x',
-    });
+    const { check: c } = await check(
+      'upload.preflight',
+      [channelRow()],
+      HEALTHY,
+      {},
+      {
+        presign: async () => 'data:no-s3-configured;key=x',
+      },
+    );
     expect(c.verdict).toBe('warn');
     expect(c.detail).toContain('no object storage');
   });
@@ -477,35 +489,53 @@ describe('identity.jwks', () => {
      * package, so this command cannot run it — see `DoctorDeps.health`. The
      * verdict therefore comes from `GET /v1/integration-health`, which does.
      */
-    const { check: c } = await check('identity.jwks', [idv(true)], HEALTHY, {}, {
-      health: async () => [
-        { id: 'channel.origins', ok: true, detail: 'not this one', fix: null },
-        {
-          id: 'identity.jwks_reachable',
-          ok: false,
-          detail: '1 of 1 key set(s) could not be fetched: dns',
-          fix: 'Check the issuer host resolves.',
-        },
-      ],
-    });
+    const { check: c } = await check(
+      'identity.jwks',
+      [idv(true)],
+      HEALTHY,
+      {},
+      {
+        health: async () => [
+          { id: 'channel.origins', ok: true, detail: 'not this one', fix: null },
+          {
+            id: 'identity.jwks_reachable',
+            ok: false,
+            detail: '1 of 1 key set(s) could not be fetched: dns',
+            fix: 'Check the issuer host resolves.',
+          },
+        ],
+      },
+    );
     expect(c.verdict).toBe('fail');
     expect(c.detail).toContain('could not be fetched');
     expect(c.fix).toBe('Check the issuer host resolves.');
   });
 
   it('treats ok:null as a warning, because not-determined is not broken', async () => {
-    const { check: c } = await check('identity.jwks', [idv(true)], HEALTHY, {}, {
-      health: async () => [
-        { id: 'identity.jwks_reachable', ok: null, detail: 'not probed yet', fix: null },
-      ],
-    });
+    const { check: c } = await check(
+      'identity.jwks',
+      [idv(true)],
+      HEALTHY,
+      {},
+      {
+        health: async () => [
+          { id: 'identity.jwks_reachable', ok: null, detail: 'not probed yet', fix: null },
+        ],
+      },
+    );
     expect(c.verdict).toBe('warn');
   });
 
   it('warns when integration-health cannot be read', async () => {
-    const { check: c } = await check('identity.jwks', [idv(true)], HEALTHY, {}, {
-      health: () => Promise.reject(new Error('Missing permission: workspace:read')),
-    });
+    const { check: c } = await check(
+      'identity.jwks',
+      [idv(true)],
+      HEALTHY,
+      {},
+      {
+        health: () => Promise.reject(new Error('Missing permission: workspace:read')),
+      },
+    );
     expect(c.verdict).toBe('warn');
     expect(c.fix).toContain('workspace:read');
   });

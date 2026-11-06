@@ -24,6 +24,7 @@ export function sectionWarnings(
   rows: ReadonlyArray<DocumentRow>,
   live: LiveSection,
   index: LiveIndex,
+  willSend: (key: string) => boolean,
 ): ReadonlyArray<string> {
   const out: string[] = [];
 
@@ -63,7 +64,7 @@ export function sectionWarnings(
    * carrying the server's own rules is gone — which is how the privacy host
    * check came to work only when a binding already existed.
    */
-  out.push(...(def.extraWarnings?.(rows, live.allRows ?? live.rows) ?? []));
+  out.push(...(def.extraWarnings?.(rows, live.allRows ?? live.rows, willSend) ?? []));
   return out;
 }
 

@@ -21,15 +21,9 @@ import {
   options,
   server,
 } from './listen-relay-harness.js';
-import {
-  explainMissingServer,
-  readFrames,
-  relay,
-  relayTargetUrl,
-} from './listen-relay.js';
+import { explainMissingServer, readFrames, relay, relayTargetUrl } from './listen-relay.js';
 import { listen } from './listen.js';
 import { parseArgs } from '../args.js';
-
 
 describe('parseRelayOptions', () => {
   it('refuses a relay with no explicit target, naming all three flags', () => {

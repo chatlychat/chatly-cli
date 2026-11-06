@@ -11,6 +11,38 @@ import { SERVER_OWNED } from './resource-shared.js';
 
 import type { ResourceDef } from './resource-def.js';
 
+/**
+ * `cbid`, `completionsUrl` and `completionSecret` are all `z.string()` at the
+ * route, so a non-string of any JSON type is `Expected string, received
+ * <type>` — ForgeDeck's seventh report, 2026-11-06 item 1, reproduced twice
+ * for a number and seen once each for a boolean, an array and an object. Only
+ * `cbid` was checked; the other two guarded with `typeof x === 'string'`,
+ * which SKIPS a wrong type instead of reporting it, so `plan` said
+ * `0 that cannot be applied` and `apply` exited 1.
+ *
+ * `null` is never flagged here. For `completionsUrl` it is the documented off
+ * switch; for the other two `requiredFields` already answers absent, null and
+ * blank, and a second message about the same field sends the reader looking
+ * for two problems.
+ *
+ * An array is reported as `array`, not `object` — that is what zod and
+ * therefore the route's own refusal says, and a warning that names a
+ * different type than the error sends the reader to the wrong line.
+ */
+function wrongJsonType(where: string, field: string, value: unknown): string | undefined {
+  if (value === undefined || value === null || typeof value === 'string') {
+    return undefined;
+  }
+  const kind = Array.isArray(value) ? 'array' : typeof value;
+  // "Quote it" is the fix for a scalar and nonsense for a container.
+  const advice = kind === 'number' || kind === 'boolean' ? ' Quote it.' : '';
+  const article = kind === 'array' || kind === 'object' ? 'an' : 'a';
+  return (
+    `${where}: \`${field}\` is ${article} ${kind} and the route requires a string, so the ` +
+    `write will be refused.${advice}`
+  );
+}
+
 export const PRIVACY_PARTNERS: ResourceDef =
   /*
    * ═══ THE DATA-RIGHTS OPT-IN ════════════════════════════════════════════
@@ -135,7 +167,7 @@ export const PRIVACY_PARTNERS: ResourceDef =
       'stored, not reset — to switch completions off, set `completionsUrl: null` ' +
       'explicitly. (This resource is unlike the others: the route requires `cbid` on ' +
       'every write, so the whole row is always sent.)',
-    extraWarnings: (rows, liveRows) => {
+    extraWarnings: (rows, liveRows, willSend) => {
       const out: string[] = [];
       const WHSEC = /^whsec_[A-Za-z0-9+/_=-]{16,256}$/;
       const suffixes = liveRows.flatMap((r) =>
@@ -151,16 +183,14 @@ export const PRIVACY_PARTNERS: ResourceDef =
         const live = liveFor(row.key);
 
         /*
-         * `cbid` must be a string. `requiredFields` catches absent, null and
-         * blank; a NUMBER passes all three and is `Expected string, received
-         * number` at the route.
+         * All three string fields, in document order. `requiredFields`
+         * catches absent, null and blank; a wrong TYPE passes all three.
          */
-        const cbid = row.body['cbid'];
-        if (cbid !== undefined && cbid !== null && typeof cbid !== 'string') {
-          out.push(
-            `${where}: \`cbid\` is a ${typeof cbid} and the route requires a string, so the ` +
-              'write will be refused. Quote it.',
-          );
+        for (const field of ['cbid', 'completionsUrl', 'completionSecret'] as const) {
+          const message = wrongJsonType(where, field, row.body[field]);
+          if (message !== undefined) {
+            out.push(message);
+          }
         }
 
         if (typeof secret === 'string' && !WHSEC.test(secret)) {
@@ -183,10 +213,22 @@ export const PRIVACY_PARTNERS: ResourceDef =
           (url === undefined || url === null) &&
           (live?.['completionsUrl'] ?? null) === null
         ) {
+          /*
+           * Two wordings, because the same document is two different things
+           * depending on whether this row is sent. ForgeDeck's seventh report,
+           * item 2: on an unchanged row `apply` sends nothing and exits 0, so
+           * "the server refuses it" describes an exchange that never happens.
+           * Under `--write-only` the secret IS sent and the server DOES refuse
+           * it, which is why this asks the plan rather than comparing fields.
+           */
           out.push(
-            `${where}: \`completionSecret\` is set with no \`completionsUrl\`, and none is ` +
-              'stored, so the server refuses it — a secret with nowhere to report signs ' +
-              'nothing.',
+            willSend(row.key)
+              ? `${where}: \`completionSecret\` is set with no \`completionsUrl\`, and none is ` +
+                  'stored, so the server refuses it — a secret with nowhere to report signs ' +
+                  'nothing.'
+              : `${where}: this secret is not sent — there is no \`completionsUrl\` for it to ` +
+                  'sign, and nothing else on this row changed. Add the URL, or drop the secret ' +
+                  'from the document.',
           );
         }
 

@@ -362,10 +362,7 @@ export async function runChecks(
   return out;
 }
 
-async function uploadPreflightCheck(
-  opts: DoctorOptions,
-  deps: DoctorDeps,
-): Promise<DoctorCheck> {
+async function uploadPreflightCheck(opts: DoctorOptions, deps: DoctorDeps): Promise<DoctorCheck> {
   const name = 'upload.preflight';
   let url: string;
   try {

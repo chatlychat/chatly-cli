@@ -35,12 +35,7 @@
  */
 import { ChatlyClient } from '@chatlychat/sdk-node';
 
-
-import {
-  parseRelayOptions,
-  type RelayFrame,
-  type RelayOptions,
-} from './listen-relay.js';
+import { parseRelayOptions, type RelayFrame, type RelayOptions } from './listen-relay.js';
 import { parseArgs } from '../args.js';
 
 import type { ListenDeps } from './listen-core.js';

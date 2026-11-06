@@ -44,7 +44,11 @@ const merge = (a: Record<string, unknown>, b: Record<string, unknown>): Record<s
   return out;
 };
 
-function server(rows: Row[], seen: Seen[], opts: { ignorePatch?: boolean } = {}) {
+function server(
+  rows: Row[],
+  seen: Seen[],
+  opts: { ignorePatch?: boolean; failPatch?: boolean } = {},
+) {
   const fetchFn = (async (url: string | URL, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const path = new URL(String(url)).pathname;
@@ -75,6 +79,9 @@ function server(rows: Row[], seen: Seen[], opts: { ignorePatch?: boolean } = {})
     const m = /^\/v1\/channels\/([^/]+)$/.exec(path);
     const row = rows.find((r) => r.id === m?.[1]);
     if (method === 'PATCH' && row !== undefined && body !== undefined) {
+      if (opts.failPatch === true) {
+        return json(400, { code: 'validation_failed', message: 'nope' });
+      }
       if (opts.ignorePatch !== true) {
         const { config, ...rest } = body;
         Object.assign(row, rest);
@@ -242,5 +249,92 @@ describe('channels in a workspace document', () => {
     await expect(go(['plan', '--file', doc([{ ...SITE, key: 'Bad_Key' }])], [])).rejects.toThrow(
       /must match/,
     );
+  });
+});
+
+/*
+ * ForgeDeck's SEVENTH report, 2026-11-06 item 2, reproduced twice: `apply`
+ * printed `Failed (1) — nothing was written for these` and then `Read back:
+ * everything matches the document.`, which cannot both be true.
+ *
+ * Why the read-back agrees with the failure: it re-plans WITHOUT
+ * `--write-only` on purpose (anything else reports every opaque field as a
+ * change for ever), so a credential that failed to be written is not compared
+ * at all and the plan comes back clean. The exit code was already 1 — only the
+ * sentence lied, which is the kind of defect a green suite keeps.
+ */
+describe('a failed write is not reported as verified', () => {
+  let out: string[];
+  let dir: string;
+  beforeEach(() => {
+    out = [];
+    dir = mkdtempSync(join(tmpdir(), 'chatly-wac-fail-'));
+    vi.spyOn(process.stdout, 'write').mockImplementation((c) => {
+      out.push(String(c));
+      return true;
+    });
+    vi.spyOn(process.stderr, 'write').mockImplementation((c) => {
+      out.push(String(c));
+      return true;
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const secretDoc = (): string => {
+    const p = join(dir, 'chatly.json');
+    writeFileSync(
+      p,
+      JSON.stringify({
+        version: 1,
+        resources: {
+          channels: [
+            {
+              key: 'site',
+              type: 'web',
+              name: 'Site',
+              config: { displayName: 'Acme', identityVerification: { secret: 'rotated' } },
+            },
+          ],
+        },
+      }),
+    );
+    return p;
+  };
+
+  it('says the failed row is not confirmed, instead of everything matching', async () => {
+    const seen: Seen[] = [];
+    const code = await run(
+      ['apply', '--file', secretDoc(), '--write-only', '--key', 'ck_t'],
+      server([LIVE_ROW()], seen, { failPatch: true }),
+    );
+    const text = out.join('');
+    expect(code).toBe(1);
+    expect(text).toContain('nothing was written for these');
+    // The defect: both sentences in one output.
+    expect(text).not.toContain('Read back: everything matches');
+    expect(text).toContain('NOT confirmed');
+  });
+
+  it('still says everything matches when nothing failed', async () => {
+    const seen: Seen[] = [];
+    const code = await run(
+      ['apply', '--file', secretDoc(), '--write-only', '--key', 'ck_t'],
+      server([LIVE_ROW()], seen),
+    );
+    expect(code).toBe(0);
+    expect(out.join('')).toContain('Read back: everything matches');
+  });
+
+  it('reports verified: false in --json on a failed run', async () => {
+    const seen: Seen[] = [];
+    await run(
+      ['apply', '--file', secretDoc(), '--write-only', '--json', '--key', 'ck_t'],
+      server([LIVE_ROW()], seen, { failPatch: true }),
+    );
+    const parsed = JSON.parse(out.join('')) as { verified: boolean; mismatches: unknown[] };
+    // `mismatches` is empty — the failed field is write-only and unreadable —
+    // so `verified` is the only thing a script could have gone on.
+    expect(parsed.mismatches).toEqual([]);
+    expect(parsed.verified).toBe(false);
   });
 });

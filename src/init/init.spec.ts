@@ -293,7 +293,7 @@ describe('chatly init', () => {
     expect(launcher).not.toContain("'use client'");
     expect(launcher).not.toContain('chatly init next');
 
-    expect(read('chatly.csp.mjs')).toContain("'connect-src': [\"https://api.example.test\"");
+    expect(read('chatly.csp.mjs')).toContain('\'connect-src\': ["https://api.example.test"');
     expect(read('CHATLY-PRIVACY.md')).toContain('`chatly:vt:acme-web`');
     expect(out.join('')).toContain('app/routes/api.chatly.identity.ts to your session');
   });
@@ -359,7 +359,11 @@ describe('chatly init', () => {
     )) as { GET: Get; prerender: boolean; chatlyUserHash: (s: string, id: string) => string };
     expect(anon.prerender).toBe(false);
     expect(anon.chatlyUserHash('s3cret', 'user_42')).toBe(VECTOR.identity.userHash);
-    expect(await call(anon.GET)).toEqual({ status: 200, cache: 'no-store', body: { identity: null } });
+    expect(await call(anon.GET)).toEqual({
+      status: 200,
+      cache: 'no-store',
+      body: { identity: null },
+    });
 
     signIn('src/pages/api/chatly/identity.ts');
     const signed = (await import(

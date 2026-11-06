@@ -120,15 +120,15 @@ describe('missingFromPolicies', () => {
 
 describe('sourceAdmits', () => {
   it('admits a wss: URL from an https: source, which is CSP’s own rule', () => {
-    expect(sourceAdmits('https://realtime.chatlychat.com', 'wss://realtime.chatlychat.com', SITE)).toBe(
-      true,
-    );
-    expect(sourceAdmits('http://realtime.chatlychat.com', 'wss://realtime.chatlychat.com', SITE)).toBe(
-      true,
-    );
-    expect(sourceAdmits('https://realtime.chatlychat.com', 'ws://realtime.chatlychat.com', SITE)).toBe(
-      false,
-    );
+    expect(
+      sourceAdmits('https://realtime.chatlychat.com', 'wss://realtime.chatlychat.com', SITE),
+    ).toBe(true);
+    expect(
+      sourceAdmits('http://realtime.chatlychat.com', 'wss://realtime.chatlychat.com', SITE),
+    ).toBe(true);
+    expect(
+      sourceAdmits('https://realtime.chatlychat.com', 'ws://realtime.chatlychat.com', SITE),
+    ).toBe(false);
   });
 
   it('matches *.host on a subdomain and not on the apex', () => {
@@ -157,7 +157,11 @@ describe('sourceAdmits', () => {
       sourceAdmits('https://uploads.chatlychat.com:8443', 'https://uploads.chatlychat.com', SITE),
     ).toBe(true);
     expect(
-      sourceAdmits('https://uploads.chatlychat.com/widget/', 'https://uploads.chatlychat.com', SITE),
+      sourceAdmits(
+        'https://uploads.chatlychat.com/widget/',
+        'https://uploads.chatlychat.com',
+        SITE,
+      ),
     ).toBe(true);
   });
 });
@@ -202,7 +206,9 @@ describe('siteCspVerdict', () => {
     const v = await siteCspVerdict({
       origin: SITE,
       published: PUBLISHED,
-      fetchFn: page("default-src 'self' data: blob: https://files.chatlychat.com https://widget.chatlychat.com https://api.chatlychat.com wss://realtime.chatlychat.com"),
+      fetchFn: page(
+        "default-src 'self' data: blob: https://files.chatlychat.com https://widget.chatlychat.com https://api.chatlychat.com wss://realtime.chatlychat.com",
+      ),
     });
     expect(v.verdict).toBe('fail');
     expect(v.detail).toContain('https://uploads.chatlychat.com (connect-src)');
@@ -218,7 +224,10 @@ describe('siteCspVerdict', () => {
     const v = await siteCspVerdict({
       origin: SITE,
       published: PUBLISHED,
-      fetchFn: page(null, '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'">'),
+      fetchFn: page(
+        null,
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'self\'">',
+      ),
     });
     expect(v.verdict).toBe('fail');
   });
@@ -232,7 +241,8 @@ describe('siteCspVerdict', () => {
     const v = await siteCspVerdict({
       origin: SITE,
       published: PUBLISHED,
-      fetchFn: (() => Promise.reject(new Error('getaddrinfo ENOTFOUND'))) as unknown as typeof fetch,
+      fetchFn: (() =>
+        Promise.reject(new Error('getaddrinfo ENOTFOUND'))) as unknown as typeof fetch,
     });
     expect(v.verdict).toBe('warn');
     expect(v.detail).toContain('ENOTFOUND');
