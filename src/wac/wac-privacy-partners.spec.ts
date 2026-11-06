@@ -94,10 +94,25 @@ describe('the completion secret is never rewritten blind', () => {
    * alternative is re-sending a secret on every apply, which rotates nothing
    * and logs a write that changed no state.
    */
-  it('is declared opaque AND a secret', () => {
+  it('is declared opaque, and deliberately NOT in `secrets`', () => {
     const d = resourceDef('privacyPartners');
     expect(d?.opaque).toContain('completionSecret');
-    expect(d?.secrets).toContain('completionSecret');
+    /*
+     * This asserted `secrets` CONTAINED it until 2026-11-05, and that is what
+     * made the false promise survive. `def.secrets` drives a line in
+     * `planCreate` — "the create response carries a one-time
+     * completionSecret, apply prints it once and writes it nowhere" — and
+     * there has never been one to print: the value is an INPUT the operator
+     * holds, and the route answers the boolean `completionSecretSet`.
+     * ForgeDeck reported the absence twice, once as a missing feature and then
+     * again as a false promise. `harvestSecrets` scans a write RESPONSE, so it
+     * was always scanning for something absent.
+     *
+     * Asserted EMPTY rather than merely "not containing it", because the
+     * promise is a property of the list being non-empty: a different entry
+     * appearing here would print the same banner about a different field.
+     */
+    expect(d?.secrets).toEqual([]);
   });
 
   /* A PUT with no `completionsUrl` CLEARS it, so a plan has to warn. */
