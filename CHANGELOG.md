@@ -1,5 +1,35 @@
 # @chatlychat/cli — changelog
 
+## 0.9.5 — 2026-11-06
+
+ForgeDeck's fifth report, items 2 to 4.
+
+- **`plan` and `apply` say when they are rate limited instead of going silent.**
+  Both printed zero bytes for 60 to 75 seconds against a throttled API, and
+  the underlying transport would have slept for the 809 seconds the server
+  advised. The SDK now refuses advice over 30 seconds and hands the error
+  back; the CLI prints `… rate limited (server asked for Ns) — waiting Ns,
+attempt 2 of 3` to **stderr**, so `--json` output stays parseable.
+- **`plan` runs the host rule on a first create.** The server publishes the
+  hosts a `completionsUrl` may be on, and `plan` read that list from the rows
+  left after the `enabled` filter — so on the very first opt-in, when the only
+  row carrying the rule is the unbound one, the list arrived empty and every
+  rule keyed on it did nothing. It reads the unfiltered answer now.
+- **Four more refusals answered before the write.** A `completionsUrl` that is
+  not `https`, a `completionSecret` that is not a `whsec_` secret, a secret
+  with no URL and none stored, and a `cbid` that is a number rather than a
+  string. Each was a document that planned clean and then failed at `apply`.
+- **The secret warning no longer fires on a live pair.** A document setting
+  only `completionsUrl` on a partner that already has a secret stored was
+  warned about a missing `completionSecret` the server does not need. A
+  warning that a working document will fail teaches the reader to ignore
+  warnings.
+- **The `REPLACES` line was wrong for privacy partners.** `plan` said "every
+  field the document omits reverts to its default". For this one resource the
+  service keeps what you omit, so someone deleting `completionsUrl` to stop
+  reports would have believed it was off while it was still reporting. It now
+  says so, and names `completionsUrl: null` as the way to switch it off.
+
 ## 0.9.4 — 2026-11-05
 
 ForgeDeck's fourth report, items 2 to 4.

@@ -14,6 +14,11 @@ import type { DocumentRow } from './document.js';
 
 /* ── Warnings ─────────────────────────────────────────────────────────── */
 
+/** The one place a per-row warning's prefix is written, so a key can be matched back. */
+export function rowPrefix(def: ResourceDef, key: string): string {
+  return `${def.type}/${key}: `;
+}
+
 export function sectionWarnings(
   def: ResourceDef,
   rows: ReadonlyArray<DocumentRow>,
@@ -52,7 +57,13 @@ export function sectionWarnings(
   out.push(...unknownKeyWarnings(def, rows, live.allKeys));
   out.push(...vocabularyWarnings(def, rows, live.rows));
   out.push(...requiredFieldWarnings(def, rows));
-  out.push(...(def.extraWarnings?.(rows, live.rows) ?? []));
+  /*
+   * The UNFILTERED answer, because that is what a warning wants to observe.
+   * `live.rows` has had `existsWhen` applied, so on a first create the row
+   * carrying the server's own rules is gone — which is how the privacy host
+   * check came to work only when a binding already existed.
+   */
+  out.push(...(def.extraWarnings?.(rows, live.allRows ?? live.rows) ?? []));
   return out;
 }
 
@@ -86,7 +97,7 @@ export function requiredFieldWarnings(
     });
     if (missing.length > 0) {
       out.push(
-        `${def.type}/${row.key}: ${missing.map((f) => `\`${f}\``).join(', ')} ` +
+        `${rowPrefix(def, row.key)}${missing.map((f) => `\`${f}\``).join(', ')} ` +
           `${missing.length === 1 ? 'is' : 'are'} required and ` +
           `${missing.length === 1 ? 'is' : 'are'} missing or empty, so the write will be ` +
           'refused. Set it in the document before applying.',
@@ -188,4 +199,84 @@ export function vocabularyWarnings(
       'with zod and zod STRIPS an unknown key, so a misspelling is a 200 that did nothing. ' +
       `The fields it does return: ${[...serverFields].sort().join(', ')}.`,
   ];
+}
+
+/**
+ * The sentence `plan` prints above a `fullReplace` update.
+ *
+ * `fullReplace` governs what `apply` SENDS — every declared field, because a
+ * partial body would reset the rest. Whether the SERVER then resets what the
+ * document omitted is a separate question, and for one resource the answer is
+ * no, so the sentence is overridable per resource.
+ *
+ * ForgeDeck's fifth report, 2026-11-06 item 4, reproduced twice: a
+ * `privacyPartners` document carrying only `cbid` planned with "every field
+ * the document omits reverts to its default", and after `apply` the live row
+ * still had its `completionsUrl` and `completionSecretSet: true`.
+ * `PrivacyPartnerService.enable` resolves each half as "what the caller sent,
+ * else what is stored", so an omitted field is KEPT. Someone removing the URL
+ * to stop reports would believe it was off while it was still reporting —
+ * the most expensive kind of wrong, because the plan said the right thing
+ * would happen.
+ *
+ * The flag stays `true` on that resource and must: `cbid` is required on every
+ * PUT, so a partial body is a 400. Only the sentence was wrong.
+ *
+ * Lives here rather than in `diff.ts` because that file sits exactly at the
+ * 650-line ceiling, and this is the file whose entire job is the warnings
+ * `buildPlan` prints.
+ */
+export function fullReplaceWarnings(def: ResourceDef): ReadonlyArray<string> {
+  if (def.fullReplace !== true) {
+    return [];
+  }
+  return [
+    def.fullReplaceNote ??
+      `the write REPLACES this ${def.label}: every field the document omits reverts to its ` +
+        'default. Declare the whole resource here, not just what you want changed.',
+  ];
+}
+
+/**
+ * Which rows the server is going to REFUSE, as keys.
+ *
+ * ForgeDeck's fifth report (2026-11-06, item 3): seven documents each planned
+ * as `1 to create … 0 that cannot be applied` and exited 2 — the same code a
+ * good change exits — and `apply` then refused every one. A warning nobody
+ * counts does not reach a pipeline, so `plan` looked identical whether the
+ * change was ready or doomed.
+ *
+ * Derived from the MESSAGES rather than re-running the rules, because a second
+ * evaluation is a second place to be wrong: two copies of the same predicate
+ * drift and then the count disagrees with the text above it. Matching is exact
+ * — the candidate keys are known, and `rowPrefix` is the single place the
+ * prefix is written — so this is not parsing.
+ *
+ * `unknownKeyWarnings` is a refusal too (the PUT answers 404) and it aggregates
+ * every unlisted key into ONE section-level message, so its rows are added from
+ * the same `allKeys` test it uses rather than from its text.
+ */
+export function refusedRowKeys(
+  def: ResourceDef,
+  rows: ReadonlyArray<DocumentRow>,
+  live: LiveSection,
+  messages: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const out = new Set<string>();
+  for (const row of rows) {
+    if (messages.some((m) => m.startsWith(rowPrefix(def, row.key)))) {
+      out.add(row.key);
+    }
+  }
+  const known = def.existsWhen === undefined ? undefined : live.allKeys;
+  if (known !== undefined && known.length > 0) {
+    const set = new Set(known);
+    for (const row of rows) {
+      // Same test `unknownKeyWarnings` applies, including its empty-key guard.
+      if (row.key !== '' && !set.has(normalizedKey(def, row.key))) {
+        out.add(row.key);
+      }
+    }
+  }
+  return [...out];
 }

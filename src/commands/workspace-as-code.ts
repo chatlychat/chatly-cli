@@ -126,7 +126,7 @@ export async function readLive(
       out.set(def.type, {
         rows:
           def.existsWhen === undefined ? rows : rows.filter((r) => def.existsWhen?.(r) === true),
-        ...(def.existsWhen === undefined ? {} : { allKeys: naturalKeys(def, rows) }),
+        ...(def.existsWhen === undefined ? {} : { allKeys: naturalKeys(def, rows), allRows: rows }),
       });
       continue;
     }
@@ -142,7 +142,7 @@ export async function readLive(
     out.set(def.type, {
       rows,
       possiblyTruncated: all.length >= EXEMPT_LIST_CAP,
-      ...(def.existsWhen === undefined ? {} : { allKeys: naturalKeys(def, all) }),
+      ...(def.existsWhen === undefined ? {} : { allKeys: naturalKeys(def, all), allRows: all }),
     });
   }
   return out;
@@ -189,6 +189,16 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
    * is how a drift alarm becomes a flake alarm.
    */
   if (bool(args.flags, 'exit-code')) {
+    /*
+     * 3 before 2, because a pipeline wants to tell them apart: 2 is "production
+     * has drifted from this file", which is the thing `--exit-code` is FOR, and
+     * 3 is "this file will not apply at all". ForgeDeck's fifth report
+     * (2026-11-06 item 3) had seven unapplyable documents exit 2, the same code
+     * a good change exits, so nothing downstream could distinguish them.
+     */
+    if (built.refused.length > 0) {
+      return 3;
+    }
     const counts = tally(built);
     return counts.create + counts.update + counts.blocked > 0 ? 2 : 0;
   }

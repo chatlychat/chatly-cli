@@ -47,7 +47,7 @@
  * the reason on the line. The alternative in every case is picking one and
  * being wrong silently, which is how the wrong resource gets overwritten.
  */
-import { sectionWarnings } from './diff-warnings.js';
+import { fullReplaceWarnings, refusedRowKeys, sectionWarnings } from './diff-warnings.js';
 import {
   normalizedKey,
   projected,
@@ -113,6 +113,7 @@ export interface Plan {
   readonly warnings: ReadonlyArray<string>;
   /** Types whose live list may be incomplete, so `--prune` is refused. */
   readonly pruneUnsafe: ReadonlyArray<string>;
+  readonly refused: ReadonlyArray<string>; // see `refusedRowKeys` in diff-warnings.ts
 }
 
 export interface LiveSection {
@@ -126,6 +127,8 @@ export interface LiveSection {
    * reader. A key absent here is one the server has never heard of.
    */
   readonly allKeys?: ReadonlyArray<string>;
+  /** Unfiltered rows (pre-`existsWhen`); `extraWarnings` reads them — see `diff-warnings.ts`. */
+  readonly allRows?: ReadonlyArray<Record<string, unknown>>;
 }
 
 /* ── Live indexing ────────────────────────────────────────────────────── */
@@ -219,6 +222,7 @@ export function buildPlan(
 ): Plan {
   const items: PlanItem[] = [];
   const warnings: string[] = [];
+  const refused: string[] = []; // keys the server will refuse; see `refusedRowKeys`
   const pruneUnsafe: string[] = [];
   const known = new Map<string, KnownIds>();
   for (const { def, section } of opts.referenced ?? []) {
@@ -243,6 +247,7 @@ export function buildPlan(
     known.set(def.type, ids);
 
     warnings.push(...sectionWarnings(def, section.rows, liveSection, index));
+    refused.push(...refusedRowKeys(def, section.rows, liveSection, warnings));
     if (liveSection.possiblyTruncated === true) {
       pruneUnsafe.push(def.type);
     }
@@ -292,7 +297,7 @@ export function buildPlan(
     }
   }
 
-  return { items, warnings, pruneUnsafe };
+  return { items, warnings, pruneUnsafe, refused };
 }
 
 /**
@@ -582,12 +587,7 @@ function planUpdate(
     }
   }
 
-  if (def.fullReplace === true) {
-    extra.push(
-      `the write REPLACES this ${def.label}: every field the document omits reverts to its ` +
-        'default. Declare the whole resource here, not just what you want changed.',
-    );
-  }
+  extra.push(...fullReplaceWarnings(def));
 
   return {
     type: def.type,

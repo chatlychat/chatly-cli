@@ -10,7 +10,7 @@
 import { type ApplyOptions } from '../apply.js';
 import { type LiveSection } from '../diff.js';
 import { DocumentError, parseDocument } from '../document.js';
-import { resourceDef, type ResourceDef } from '../resources.js';
+import { naturalKeys, resourceDef, type ResourceDef } from '../resources.js';
 
 export const APPLY: ApplyOptions = { prune: false, pruneUnsafe: [], writeOnly: false };
 
@@ -30,10 +30,36 @@ export function issues(input: unknown, env: Record<string, string> = {}): string
   return [];
 }
 
+/**
+ * The live index as the REAL fetch builds it, which is not what this used to
+ * return.
+ *
+ * It was `{ rows: v }` — no `existsWhen` filter, no `allKeys`, no `allRows` —
+ * and `fetchLive` in `workspace-as-code.ts` does all three. For the one
+ * resource with an `existsWhen` that difference was the bug rather than a
+ * detail: `privacyPartners` lists the whole registry with `enabled: false` for
+ * what nobody opted into, the real `plan` never sees those rows in
+ * `live.rows`, and this fixture handed them over. So every rule reading a
+ * field off the unbound row was tested against a shape production never
+ * produces, and the host check passed here while doing nothing on a first
+ * create — ForgeDeck's fifth report, 2026-11-06 item 3.
+ *
+ * A fixture that invents a shape makes the suite agree with the bug. Mirror
+ * `fetchLive` here, and if that function changes, change this with it.
+ */
 export function live(
   rows: Record<string, ReadonlyArray<Record<string, unknown>>>,
 ): Map<string, LiveSection> {
-  return new Map(Object.entries(rows).map(([k, v]) => [k, { rows: v }]));
+  return new Map(
+    Object.entries(rows).map(([k, v]) => {
+      const def = resourceDef(k);
+      if (def?.existsWhen === undefined) {
+        return [k, { rows: v }];
+      }
+      const kept = v.filter((r) => def.existsWhen?.(r) === true);
+      return [k, { rows: kept, allKeys: naturalKeys(def, v), allRows: v }];
+    }),
+  );
 }
 
 export function def(type: string): ResourceDef {

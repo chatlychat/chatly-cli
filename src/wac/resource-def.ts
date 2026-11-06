@@ -169,6 +169,26 @@ export interface ResourceDef {
    * would add fields no other resource sets. Returns warning lines; it must
    * only OBSERVE, like everything else in `diff-warnings.ts`.
    */
+  /**
+   * Resource-specific `plan` warnings: the rules the server enforces that no
+   * generic check can see.
+   *
+   * `liveRows` is the list route's UNFILTERED answer — before `existsWhen`.
+   * That matters and was wrong first: the privacy resource reads the server's
+   * host allow-list off a live row, and on a first create the only row that
+   * carries it is the unbound one `existsWhen` removes, so every rule keyed on
+   * it silently did nothing on exactly the call that needed it most.
+   */
+  /**
+   * Replaces the generic `fullReplace` sentence, for a resource where "every
+   * omitted field reverts to its default" is not what the server does.
+   *
+   * `fullReplace` governs what `apply` SENDS; this governs what `plan` SAYS
+   * will happen. They came apart on `privacyPartners`, where the flag is
+   * required (a PUT without the mandatory `cbid` is a 400) and the sentence
+   * was false (the service keeps what the caller omitted).
+   */
+  readonly fullReplaceNote?: string;
   readonly extraWarnings?: (
     rows: ReadonlyArray<{ key: string; body: Record<string, unknown> }>,
     liveRows: ReadonlyArray<Record<string, unknown>>,

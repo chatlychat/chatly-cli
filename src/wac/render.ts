@@ -143,6 +143,23 @@ export function planFooter(plan: Plan, opts: RenderOptions): string {
         'rather than half-write them. The reason is on each line.',
     );
   }
+  /*
+   * Rows the SERVER will refuse, which is a different thing from `blocked`.
+   * `apply` still sends these — the server, not this CLI, is the authority on
+   * what it accepts — so the honest summary is "these will fail", not "these
+   * will be skipped". ForgeDeck's fifth report, 2026-11-06 item 3: seven
+   * documents planned as `0 that cannot be applied` and `apply` refused all
+   * seven, so the plan read identically whether the change was ready or
+   * doomed. `--exit-code` returns 3 for this, distinct from 2 for drift.
+   */
+  if (plan.refused.length > 0) {
+    lines.push(
+      `${String(plan.refused.length)} document(s) will be REFUSED by the server as written ` +
+        `(${plan.refused.join(', ')}). The warnings above say why. \`apply\` will still try ` +
+        'them — the server decides, not this CLI — so expect it to fail until they are fixed. ' +
+        '`--exit-code` answers 3 for this.',
+    );
+  }
   return `${lines.join('\n')}\n`;
 }
 

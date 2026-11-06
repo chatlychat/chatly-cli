@@ -57,9 +57,12 @@ function warnings(body: Record<string, unknown>, suffixes?: readonly string[]): 
 
 describe('a required field the document omits', () => {
   it('warns when `cbid` is absent, naming it and saying the write is refused', () => {
-    const [w, ...rest] = requiredFieldWarnings(def('privacyPartners'), rowsFor({
-      provider: 'cookiemunch',
-    }));
+    const [w, ...rest] = requiredFieldWarnings(
+      def('privacyPartners'),
+      rowsFor({
+        provider: 'cookiemunch',
+      }),
+    );
     expect(rest).toEqual([]);
     expect(w).toContain('cbid');
     expect(w).toContain('required');
@@ -70,17 +73,23 @@ describe('a required field the document omits', () => {
    * `""` is present and fails the route's `min(1)`.
    */
   it('warns on an EMPTY cbid, which a presence check would pass', () => {
-    const [w, ...rest] = requiredFieldWarnings(def('privacyPartners'), rowsFor({
-      provider: 'cookiemunch',
-      cbid: '',
-    }));
+    const [w, ...rest] = requiredFieldWarnings(
+      def('privacyPartners'),
+      rowsFor({
+        provider: 'cookiemunch',
+        cbid: '',
+      }),
+    );
     expect(rest).toEqual([]);
     expect(w).toContain('cbid');
   });
 
   it('warns on whitespace, which the route trims to empty', () => {
     expect(
-      requiredFieldWarnings(def('privacyPartners'), rowsFor({ provider: 'cookiemunch', cbid: '  ' })),
+      requiredFieldWarnings(
+        def('privacyPartners'),
+        rowsFor({ provider: 'cookiemunch', cbid: '  ' }),
+      ),
     ).toHaveLength(1);
   });
 
@@ -114,7 +123,7 @@ describe('the completions pair, checked before it is written', () => {
       provider: 'cookiemunch',
       cbid: 'c',
       completionsUrl: URL_OK,
-      completionSecret: 'whsec_abc',
+      completionSecret: 'whsec_abcdefghijklmnop',
     });
     expect(w.some((x) => x.includes('completionSecret'))).toBe(false);
   });
@@ -126,7 +135,7 @@ describe('the completions host, checked against what the server published', () =
       provider: 'cookiemunch',
       cbid: 'c',
       completionsUrl: 'https://evil.example.com/x',
-      completionSecret: 'whsec_abc',
+      completionSecret: 'whsec_abcdefghijklmnop',
     });
     expect(w.some((x) => x.includes('evil.example.com') && x.includes('cookiemunch.net'))).toBe(
       true,
@@ -139,7 +148,7 @@ describe('the completions host, checked against what the server published', () =
         provider: 'cookiemunch',
         cbid: 'c',
         completionsUrl: url,
-        completionSecret: 'whsec_abc',
+        completionSecret: 'whsec_abcdefghijklmnop',
       });
       expect(w.some((x) => x.includes('only accepts'))).toBe(false);
     }
@@ -155,7 +164,7 @@ describe('the completions host, checked against what the server published', () =
       provider: 'cookiemunch',
       cbid: 'c',
       completionsUrl: 'https://evilcookiemunch.net/x',
-      completionSecret: 'whsec_abc',
+      completionSecret: 'whsec_abcdefghijklmnop',
     });
     expect(w.some((x) => x.includes('only accepts'))).toBe(true);
   });
@@ -169,7 +178,7 @@ describe('the completions host, checked against what the server published', () =
       provider: 'cookiemunch',
       cbid: 'c',
       completionsUrl: 'https://api.osano.com/x',
-      completionSecret: 'whsec_abc',
+      completionSecret: 'whsec_abcdefghijklmnop',
     };
     expect(warnings(body).some((x) => x.includes('only accepts'))).toBe(true);
     expect(
@@ -188,21 +197,28 @@ describe('the completions host, checked against what the server published', () =
         provider: 'cookiemunch',
         cbid: 'c',
         completionsUrl: 'https://anything.example.com/x',
-        completionSecret: 'whsec_abc',
+        completionSecret: 'whsec_abcdefghijklmnop',
       },
       [],
     );
     expect(w.some((x) => x.includes('only accepts'))).toBe(false);
   });
 
-  it('warns when the URL is not a URL at all', () => {
+  /*
+   * The wording follows the ROUTE, which answers "The completions URL must be
+   * a public https URL" for anything `new URL()` refuses as well as for a URL
+   * on a good host with the wrong scheme. This asserted its own earlier
+   * phrasing ("is not a URL") until 2026-11-06; a warning that words a refusal
+   * differently from the server sends the reader looking for a second rule.
+   */
+  it('warns when the URL is not a URL at all, in the route`s words', () => {
     const w = warnings({
       provider: 'cookiemunch',
       cbid: 'c',
       completionsUrl: 'not-a-url',
-      completionSecret: 'whsec_abc',
+      completionSecret: 'whsec_abcdefghijklmnop',
     });
-    expect(w.some((x) => x.includes('not a URL'))).toBe(true);
+    expect(w.some((x) => x.includes('public https URL'))).toBe(true);
   });
 });
 
@@ -224,7 +240,7 @@ describe('the warnings reach a real plan', () => {
       provider: 'cookiemunch',
       cbid: 'cb_live_1',
       completionsUrl: URL_OK,
-      completionSecret: 'whsec_abc',
+      completionSecret: 'whsec_abcdefghijklmnop',
     });
     expect(w).toEqual([]);
   });
@@ -232,5 +248,260 @@ describe('the warnings reach a real plan', () => {
   /** `sectionWarnings` is exported and used directly elsewhere; keep it callable. */
   it('sectionWarnings is the single aggregation point', () => {
     expect(typeof sectionWarnings).toBe('function');
+  });
+});
+
+/* ── ForgeDeck's FIFTH report, 2026-11-06 items 3 and 4 ────────────────── */
+
+/** A live row for a provider somebody HAS opted into, with both halves stored. */
+const bound = (over: Record<string, unknown> = {}) => ({
+  ...unbound(),
+  enabled: true,
+  cbid: 'cb_live_1',
+  completionsUrl: 'https://api.cookiemunch.net/v1/stored',
+  completionSecretSet: true,
+  ...over,
+});
+
+/** Warnings for one document against an explicit live list. */
+function against(
+  body: Record<string, unknown>,
+  liveRows: ReadonlyArray<Record<string, unknown>>,
+): string[] {
+  const parsed = parseDocument(doc({ privacyPartners: [body] }));
+  return [...buildPlan(parsed, live({ privacyPartners: liveRows })).warnings];
+}
+
+describe('the host rule on a FIRST create', () => {
+  /*
+   * The regression that mattered, and the reason it survived its own test.
+   *
+   * `extraWarnings` was handed `live.rows`, which the fetch has already run
+   * `existsWhen` over — and `existsWhen` here is `enabled === true`. On a
+   * first opt-in the ONLY row carrying `completionHostSuffixes` is the unbound
+   * one, so the list arrived empty, and an empty list is deliberately treated
+   * as no evidence. Every rule keyed on the server's host list therefore did
+   * nothing on exactly the call that needed it most.
+   *
+   * It passed anyway because `live()` in the fixtures returned `{ rows: v }`
+   * with no filter at all, so the test fed the unbound row through a door
+   * production closes. The fixture mirrors `fetchLive` now; this test fails
+   * against the old `live.rows` read.
+   */
+  it('warns about a bad host when no binding exists yet', () => {
+    const w = against(
+      {
+        provider: 'cookiemunch',
+        cbid: 'c',
+        completionsUrl: 'https://evil.example.com/x',
+        completionSecret: 'whsec_abcdefghijklmnop',
+      },
+      [unbound()],
+    );
+    expect(w.some((x) => x.includes('evil.example.com') && x.includes('cookiemunch.net'))).toBe(
+      true,
+    );
+  });
+
+  it('still warns when a binding DOES exist', () => {
+    const w = against(
+      {
+        provider: 'cookiemunch',
+        cbid: 'c',
+        completionsUrl: 'https://evil.example.com/x',
+        completionSecret: 'whsec_abcdefghijklmnop',
+      },
+      [bound()],
+    );
+    expect(w.some((x) => x.includes('only accepts'))).toBe(true);
+  });
+});
+
+describe('the rules mirror the route, in the route`s own order', () => {
+  it('warns that a plain http URL is not a public https URL', () => {
+    const w = against(
+      {
+        provider: 'cookiemunch',
+        cbid: 'c',
+        // A GOOD host, so this can only be the scheme.
+        completionsUrl: 'http://api.cookiemunch.net/x',
+        completionSecret: 'whsec_abcdefghijklmnop',
+      },
+      [unbound()],
+    );
+    expect(w.some((x) => x.includes('public https URL'))).toBe(true);
+    /*
+     * And NOT as a host complaint. `checkCompletionsUrl` tests the scheme
+     * before the host, so a warning naming the host would send the reader to
+     * the wrong line of their document.
+     */
+    expect(w.some((x) => x.includes('only accepts'))).toBe(false);
+  });
+
+  it('warns on a completionSecret that is not a whsec_ secret', () => {
+    const w = against(
+      { provider: 'cookiemunch', cbid: 'c', completionsUrl: URL_OK, completionSecret: 'hunter2' },
+      [unbound()],
+    );
+    expect(w.some((x) => x.includes('whsec_'))).toBe(true);
+  });
+
+  /*
+   * The RIGHT PREFIX and too short, which is the case a `startsWith` check
+   * would pass. `whsec_abc` is what every test in this file used before
+   * 2026-11-06 and the route has always refused it — three of those tests
+   * failed the moment this rule existed, which is the rule earning its place
+   * on fixtures nobody had checked against the route's own regex.
+   */
+  it('warns on a whsec_ secret that is too short for the route`s pattern', () => {
+    const w = against(
+      { provider: 'cookiemunch', cbid: 'c', completionsUrl: URL_OK, completionSecret: 'whsec_abc' },
+      [unbound()],
+    );
+    expect(w.some((x) => x.includes('whsec_'))).toBe(true);
+  });
+
+  it('is silent on a secret that matches the route`s pattern', () => {
+    const w = against(
+      {
+        provider: 'cookiemunch',
+        cbid: 'c',
+        completionsUrl: URL_OK,
+        completionSecret: 'whsec_abcdefghijklmnop',
+      },
+      [unbound()],
+    );
+    expect(w).toEqual([]);
+  });
+
+  /*
+   * A secret with nowhere to report. `requiredFields` cannot catch this — the
+   * field is present and non-empty — and nor can the URL rules, which only run
+   * when there IS a URL.
+   */
+  it('warns on a secret with no URL and none stored', () => {
+    const w = against(
+      { provider: 'cookiemunch', cbid: 'c', completionSecret: 'whsec_abcdefghijklmnop' },
+      [unbound()],
+    );
+    expect(w.some((x) => x.includes('nowhere to report'))).toBe(true);
+  });
+
+  it('is silent on a secret with no URL when one IS stored — that is a rotation', () => {
+    const w = against(
+      { provider: 'cookiemunch', cbid: 'c', completionSecret: 'whsec_abcdefghijklmnop' },
+      [bound()],
+    );
+    expect(w.some((x) => x.includes('nowhere to report'))).toBe(false);
+  });
+
+  /*
+   * A NUMBER passes every `requiredFields` test — present, not null, not a
+   * blank string — and is `Expected string, received number` at the route.
+   */
+  it('warns on a cbid that is a number', () => {
+    const w = against({ provider: 'cookiemunch', cbid: 5 }, [unbound()]);
+    expect(w.some((x) => x.includes('cbid') && x.includes('number'))).toBe(true);
+  });
+
+  it('is silent on a quoted cbid', () => {
+    expect(against({ provider: 'cookiemunch', cbid: '5' }, [unbound()])).toEqual([]);
+  });
+});
+
+describe('the secret warning on a live pair', () => {
+  /*
+   * ForgeDeck item 4, reproduced twice: a document setting only
+   * `completionsUrl` on a partner that already has a secret stored was warned
+   * that the server "refuses a URL with nothing to sign with". The server
+   * accepts it — `enable` resolves each half as "what the caller sent, else
+   * what is stored" — and `apply` exits 0. A warning that a working document
+   * will fail teaches the reader to ignore warnings.
+   */
+  it('is silent when the live row reports completionSecretSet', () => {
+    const w = against({ provider: 'cookiemunch', cbid: 'cb_live_1', completionsUrl: URL_OK }, [
+      bound(),
+    ]);
+    expect(w.some((x) => x.includes('nothing to sign with'))).toBe(false);
+  });
+
+  it('still warns when no secret is stored', () => {
+    const w = against({ provider: 'cookiemunch', cbid: 'cb_live_1', completionsUrl: URL_OK }, [
+      bound({ completionSecretSet: false }),
+    ]);
+    expect(w.some((x) => x.includes('nothing to sign with'))).toBe(true);
+  });
+});
+
+describe('what `plan` says a write will REPLACE', () => {
+  /*
+   * ForgeDeck item 4's second half. The generic sentence is "every field the
+   * document omits reverts to its default", and for this resource that is
+   * false: `PrivacyPartnerService.enable` keeps what the caller omitted. The
+   * consequence is the expensive kind — somebody deleting `completionsUrl` to
+   * stop reports would believe it was off while it was still reporting.
+   */
+  it('does not claim omitted fields revert, and names the real off switch', () => {
+    const parsed = parseDocument(
+      doc({ privacyPartners: [{ provider: 'cookiemunch', cbid: 'x' }] }),
+    );
+    const plan = buildPlan(parsed, live({ privacyPartners: [bound()] }));
+    const extra = plan.items[0]?.notes.join(' ') ?? '';
+    expect(plan.items[0]?.action).toBe('update');
+    expect(extra).not.toContain('reverts to its default');
+    expect(extra).toContain('completionsUrl: null');
+  });
+
+  /* The flag itself must stay: `cbid` is required on every PUT. */
+  it('keeps sending every declared field', () => {
+    expect(def('privacyPartners').fullReplace).toBe(true);
+  });
+});
+
+describe('refused rows are counted, not just described', () => {
+  /*
+   * ForgeDeck item 3: seven unapplyable documents each planned as `0 that
+   * cannot be applied` and exited 2 — the code a GOOD change exits — so
+   * nothing downstream could tell a ready change from a doomed one.
+   */
+  it('counts a row the server will refuse', () => {
+    const parsed = parseDocument(doc({ privacyPartners: [{ provider: 'cookiemunch' }] }));
+    const plan = buildPlan(parsed, live({ privacyPartners: [unbound()] }));
+    expect(plan.refused).toEqual(['cookiemunch']);
+  });
+
+  it('counts a row ONCE even when it breaks several rules', () => {
+    const parsed = parseDocument(
+      doc({
+        privacyPartners: [
+          { provider: 'cookiemunch', completionsUrl: 'nope', completionSecret: 'x' },
+        ],
+      }),
+    );
+    const plan = buildPlan(parsed, live({ privacyPartners: [unbound()] }));
+    expect(plan.refused).toEqual(['cookiemunch']);
+  });
+
+  /* An unlisted provider is a 404 at the PUT, and its warning is section-level. */
+  it('counts a provider the server does not list', () => {
+    const parsed = parseDocument(doc({ privacyPartners: [{ provider: 'nope', cbid: 'x' }] }));
+    const plan = buildPlan(parsed, live({ privacyPartners: [unbound()] }));
+    expect(plan.refused).toEqual(['nope']);
+  });
+
+  it('is empty for a document the server will accept', () => {
+    const parsed = parseDocument(
+      doc({
+        privacyPartners: [
+          {
+            provider: 'cookiemunch',
+            cbid: 'c',
+            completionsUrl: URL_OK,
+            completionSecret: 'whsec_abcdefghijklmnop',
+          },
+        ],
+      }),
+    );
+    expect(buildPlan(parsed, live({ privacyPartners: [unbound()] })).refused).toEqual([]);
   });
 });

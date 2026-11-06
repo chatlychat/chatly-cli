@@ -6,7 +6,12 @@
  * transport, the same retry policy and the same error model. When the SDK's
  * errors are unhelpful, we feel it first.
  */
-import { ChatlyApiError, ChatlyClient, ChatlyTransportError } from '@chatlychat/sdk-node';
+import {
+  ChatlyApiError,
+  ChatlyClient,
+  ChatlyTransportError,
+  type RetryNotice,
+} from '@chatlychat/sdk-node';
 
 import { bool, parseArgs, str, type ParsedArgs } from './args.js';
 import * as ai from './commands/ai.js';
@@ -37,7 +42,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.9.4';
+const VERSION = '0.9.5';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -195,7 +200,32 @@ function resolveCredentialsUrl(): string | undefined {
  */
 export type ClientFactory = (opts: { apiKey: string; apiUrl?: string }) => ChatlyClient;
 
-const defaultFactory: ClientFactory = (opts) => new ChatlyClient(opts);
+/**
+ * Why a retry is announced on stderr.
+ *
+ * ForgeDeck's fifth report (2026-11-06, item 2): `chatly plan` and
+ * `chatly apply` printed 0 bytes for 60 to 75 seconds against a rate-limited
+ * API, which is indistinguishable from a hang — and the transport would sleep
+ * for whatever `Retry-After` said, up to the 809 seconds they were sent. The
+ * transport caps that at `MAX_ADVISED_DELAY_MS` now and hands the error back
+ * past it; this is the other half, so the quiet is explained while it happens.
+ *
+ * stderr and not stdout: `chatly plan --json` is piped into tools, and a
+ * progress line in the middle of a JSON document breaks them.
+ */
+function announceRetry(n: RetryNotice): void {
+  const why = n.status === 429 ? 'rate limited' : `HTTP ${String(n.status ?? 0)}`;
+  const advised =
+    n.retryAfterSeconds === null ? '' : ` (server asked for ${String(n.retryAfterSeconds)}s)`;
+  process.stderr.write(
+    `${n.method} ${n.path}: ${why}${advised} — waiting ` +
+      `${(n.delayMs / 1000).toFixed(1)}s, attempt ${String(n.attempt + 1)} of ` +
+      `${String(n.attempts)}\n`,
+  );
+}
+
+const defaultFactory: ClientFactory = (opts) =>
+  new ChatlyClient({ ...opts, onRetry: announceRetry });
 
 export async function run(
   argv: ReadonlyArray<string>,

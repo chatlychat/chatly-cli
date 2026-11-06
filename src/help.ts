@@ -178,7 +178,7 @@ WORKSPACE AS CODE
                               --file <path>   the document (- for stdin). Default: ./chatly.json
                               --prune         also delete what the document omits
                               --write-only    also send fields that cannot be read back
-                              --exit-code     plan only: exit 2 when there is drift
+                              --exit-code     plan only: 2 = drift, 3 = will not apply
   platform plan               The same over /v1/platform/* with a cp_ credential:
   platform apply              workspaces, users, apiKeys, botCredentials,
                               knowledgeSources and settings (business hours,
