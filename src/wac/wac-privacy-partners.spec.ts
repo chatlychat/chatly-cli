@@ -28,6 +28,7 @@ const unbound = (provider: string) => ({
   completionsUrl: null,
   completionSecretSet: false,
   supportsCompletions: true,
+  completionHostSuffixes: [],
   lastSignedCompletionAt: null,
 });
 

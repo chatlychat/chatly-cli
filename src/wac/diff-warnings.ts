@@ -51,6 +51,48 @@ export function sectionWarnings(
 
   out.push(...unknownKeyWarnings(def, rows, live.allKeys));
   out.push(...vocabularyWarnings(def, rows, live.rows));
+  out.push(...requiredFieldWarnings(def, rows));
+  out.push(...(def.extraWarnings?.(rows, live.rows) ?? []));
+  return out;
+}
+
+/**
+ * A required field the document omits, or sets to something empty.
+ *
+ * ForgeDeck 2026-11-05 item 4, reproduced twice: a `privacyPartners` row with
+ * no `cbid` and one with `cbid: ""` both planned as `create` and exited 0, and
+ * `apply` then failed with `cbid: Required` and `String must contain at least
+ * 1 character(s)`. Both facts were in the document the whole time.
+ *
+ * Only on rows this plan would CREATE, which is why `liveKeys` is taken: an
+ * update sends a partial body and a field absent from it is "leave as stored",
+ * so warning there would fire on every narrow edit. An empty STRING is checked
+ * as well as an absent key because `""` passes a presence test and fails the
+ * route, which is the second of the two reported cases.
+ */
+export function requiredFieldWarnings(
+  def: ResourceDef,
+  rows: ReadonlyArray<DocumentRow>,
+): ReadonlyArray<string> {
+  const required = def.requiredFields;
+  if (required === undefined || required.length === 0) {
+    return [];
+  }
+  const out: string[] = [];
+  for (const row of rows) {
+    const missing = required.filter((f) => {
+      const v = row.body[f];
+      return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+    });
+    if (missing.length > 0) {
+      out.push(
+        `${def.type}/${row.key}: ${missing.map((f) => `\`${f}\``).join(', ')} ` +
+          `${missing.length === 1 ? 'is' : 'are'} required and ` +
+          `${missing.length === 1 ? 'is' : 'are'} missing or empty, so the write will be ` +
+          'refused. Set it in the document before applying.',
+      );
+    }
+  }
   return out;
 }
 

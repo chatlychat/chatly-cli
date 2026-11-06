@@ -1,5 +1,34 @@
 # @chatlychat/cli — changelog
 
+## 0.9.4 — 2026-11-05
+
+ForgeDeck's fourth report, items 2 to 4.
+
+- **`plan` and `apply` no longer promise a one-time secret that cannot exist.**
+  Both printed "the create response carries a one-time completionSecret —
+  `apply` prints it once and writes it nowhere", and then `apply` printed no
+  secret and `--json` showed `"secrets": []`. There has never been one: the
+  value is an INPUT the operator holds (the partner's own `whsec_…`) and the
+  route answers a boolean `completionSecretSet`. Someone following the line
+  waits for a secret that never comes, or concludes they lost it. The
+  `completionSecret` entry in `secrets` drove that banner while its own
+  docblock claimed it was "DEFENSIVE and inert". Nothing replaces the line: the
+  `opaque` entry already prints the true version, "sent on this create and
+  never readable afterwards".
+- **`plan` now flags what the server will refuse, instead of planning it.** A
+  missing `cbid`, an empty one, and a `completionsUrl` on a host the provider
+  does not allow each planned as `create` and exited 0, and `apply` then failed
+  with the real reason. `plan` exists to answer that before anything is
+  written, and every one of those facts was in the document.
+- **`plan` warns on a `completionsUrl` with no `completionSecret`**, which the
+  API now refuses outright (it used to answer 200 and discard the URL, so every
+  rerun reported a difference it would not explain).
+- The completions host check reads `completionHostSuffixes`, a field the list
+  route now returns, so it is a CHECK rather than a second copy of the server's
+  rule — a registry that gains a host needs no CLI release. An older server
+  that does not publish the field produces no host warnings at all, because an
+  empty list is no evidence.
+
 ## 0.9.3 — 2026-11-05
 
 - **`chatly apply` could not create a privacy-partner opt-in, which was the

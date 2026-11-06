@@ -143,6 +143,36 @@ export interface ResourceDef {
    * author would never find out.
    */
   readonly unwritable: ReadonlyArray<string>;
+  /**
+   * Fields the write route requires, as a non-empty value.
+   *
+   * ForgeDeck 2026-11-05 item 4: a document omitting `cbid`, and one setting
+   * it to `""`, both planned as `create` and exited 0; `apply` then failed
+   * with `cbid: Required` and `String must contain at least 1 character(s)`.
+   * `plan` exists to answer that question before anything is written, and it
+   * had the whole document in hand.
+   *
+   * This is a declared list rather than the route's own zod schema because the
+   * CLI is a published package that cannot import `apps/api`. It is the same
+   * shape of hardcode as `unwritable` and `opaque` beside it, and it drifts the
+   * same way — a field becoming required server-side makes this list short, and
+   * a short list under-warns rather than refusing a valid document, which is
+   * the right direction to be wrong in.
+   */
+  readonly requiredFields?: ReadonlyArray<string>;
+  /**
+   * Rules only this resource has, checked against the live rows.
+   *
+   * A hook rather than more declarative fields on every def: the two rules
+   * that wanted it (a `completionsUrl` host allow-list, and the URL needing a
+   * secret) belong beside the resource that has them, and encoding them here
+   * would add fields no other resource sets. Returns warning lines; it must
+   * only OBSERVE, like everything else in `diff-warnings.ts`.
+   */
+  readonly extraWarnings?: (
+    rows: ReadonlyArray<{ key: string; body: Record<string, unknown> }>,
+    liveRows: ReadonlyArray<Record<string, unknown>>,
+  ) => ReadonlyArray<string>;
   /** The live row, reshaped into the vocabulary the document writes. */
   readonly project?: (row: Record<string, unknown>) => Record<string, unknown>;
   /** Document-only keys naming another resource by ITS natural key. */
