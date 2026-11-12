@@ -12,7 +12,7 @@ fixed and we will port it with attribution.
 What you can do here: read the source, run the tests, open an issue, or open a PR
 and we will treat the diff as the proposal.
 
-Not mirrored: src/commands/secret.spec.ts — specs that assert a type restated here still
+Not mirrored: src/commands/secret.spec.ts, src/wac/wac-report13.spec.ts — specs that assert a type restated here still
 matches the monorepo's original, which is only a meaningful claim inside it. They
 keep running there.
 
