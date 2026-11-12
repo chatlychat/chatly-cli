@@ -7,7 +7,14 @@
  * with no natural key, a key on two rows, a field no live row carries — and
  * the plan is the same with or without them.
  */
+import {
+  requiredFieldWarnings,
+  rowPrefix,
+  rulesFor,
+  wrongTypeWarnings,
+} from './field-rules-checks.js';
 import { looksLikeCredential, normalizedKey, projected, type ResourceDef } from './resources.js';
+import { unionArmWarnings } from './union-arm-checks.js';
 
 import type { LiveIndex, LiveSection, PlanItem } from './diff.js';
 import type { DocumentRow } from './document.js';
@@ -15,16 +22,20 @@ import type { DocumentRow } from './document.js';
 /* ── Warnings ─────────────────────────────────────────────────────────── */
 
 /** The one place a per-row warning's prefix is written, so a key can be matched back. */
-export function rowPrefix(def: ResourceDef, key: string): string {
-  return `${def.type}/${key}: `;
-}
 
 export function sectionWarnings(
   def: ResourceDef,
   rows: ReadonlyArray<DocumentRow>,
   live: LiveSection,
   index: LiveIndex,
-  willSend: (key: string) => boolean,
+  /*
+   * The planned action for a document key, or `undefined` if the row was not
+   * planned. Two rules need it and need different parts of it: a refusal
+   * prediction asks "will this be SENT" (create or update), and the
+   * required-field rule asks "is this a CREATE" — a PATCH body is partial, so
+   * an absent field there means "leave as stored".
+   */
+  actionFor: (key: string) => DocumentAction,
 ): ReadonlyArray<string> {
   const out: string[] = [];
 
@@ -56,57 +67,49 @@ export function sectionWarnings(
   }
 
   out.push(...unknownKeyWarnings(def, rows, live.allKeys));
-  out.push(...vocabularyWarnings(def, rows, live.rows));
-  out.push(...requiredFieldWarnings(def, rows));
+  /*
+   * The live-row heuristic runs ONLY where the route's own rules are unknown.
+   *
+   * It guesses from what live rows return, and since 2026-11-06 the generated
+   * table answers the same question from what the route DECLARES. Running both
+   * gave two warnings for one misspelt field, which an integrator reported on
+   * `brands`, `triggers`, `macros`, `customerCards`, `webhooks` and
+   * `channels`. The heuristic is also wrong in a way the table is not: its
+   * text asserts "zod STRIPS an unknown key", which is false for the 175
+   * strict schemas in this API — `POST /v1/customer-cards` refuses the body.
+   * It still earns its place on the platform resources, which have no table
+   * entry.
+   */
+  if (rulesFor(def) === undefined) {
+    out.push(...vocabularyWarnings(def, rows, live.rows));
+  }
+  out.push(...requiredFieldWarnings(def, rows, actionFor));
+  out.push(...wrongTypeWarnings(def, rows, actionFor));
+  /*
+   * LAST, and reading what the two above produced: a row they have already
+   * named does not also get "matches none of the shapes". The union check is
+   * the coarse answer and theirs are the precise ones, so theirs win.
+   */
+  out.push(...unionArmWarnings(def, rows, actionFor, out));
   /*
    * The UNFILTERED answer, because that is what a warning wants to observe.
    * `live.rows` has had `existsWhen` applied, so on a first create the row
    * carrying the server's own rules is gone — which is how the privacy host
    * check came to work only when a binding already existed.
    */
-  out.push(...(def.extraWarnings?.(rows, live.allRows ?? live.rows, willSend) ?? []));
+  out.push(
+    ...(def.extraWarnings?.(rows, live.allRows ?? live.rows, (key) => {
+      const action = actionFor(key);
+      return action === 'create' || action === 'update';
+    }) ?? []),
+  );
   return out;
 }
 
-/**
- * A required field the document omits, or sets to something empty.
- *
- * ForgeDeck 2026-11-05 item 4, reproduced twice: a `privacyPartners` row with
- * no `cbid` and one with `cbid: ""` both planned as `create` and exited 0, and
- * `apply` then failed with `cbid: Required` and `String must contain at least
- * 1 character(s)`. Both facts were in the document the whole time.
- *
- * Only on rows this plan would CREATE, which is why `liveKeys` is taken: an
- * update sends a partial body and a field absent from it is "leave as stored",
- * so warning there would fire on every narrow edit. An empty STRING is checked
- * as well as an absent key because `""` passes a presence test and fails the
- * route, which is the second of the two reported cases.
- */
-export function requiredFieldWarnings(
-  def: ResourceDef,
-  rows: ReadonlyArray<DocumentRow>,
-): ReadonlyArray<string> {
-  const required = def.requiredFields;
-  if (required === undefined || required.length === 0) {
-    return [];
-  }
-  const out: string[] = [];
-  for (const row of rows) {
-    const missing = required.filter((f) => {
-      const v = row.body[f];
-      return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
-    });
-    if (missing.length > 0) {
-      out.push(
-        `${rowPrefix(def, row.key)}${missing.map((f) => `\`${f}\``).join(', ')} ` +
-          `${missing.length === 1 ? 'is' : 'are'} required and ` +
-          `${missing.length === 1 ? 'is' : 'are'} missing or empty, so the write will be ` +
-          'refused. Set it in the document before applying.',
-      );
-    }
-  }
-  return out;
-}
+/* ── Field rules, from the generated route table ──────────────────────── */
+
+/** What `plan` decided to do with a document key, as the rules below see it. */
+export type DocumentAction = 'create' | 'update' | 'noop' | 'orphan' | 'blocked' | undefined;
 
 /**
  * A key the server's own enumeration does not contain.

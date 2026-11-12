@@ -57,6 +57,9 @@
  * reported as such rather than passed off as a clean bill. See `diff.ts`.
  */
 import { keyOf, list } from './document-key.js';
+import { interpolate, missingEnvRefMessage, mistakenEnvRefMessage } from './env-refs.js';
+import { SINGLETON_KEY } from './resource-shared.js';
+import { SETTINGS_REFUSAL } from './resources-singletons.js';
 import { resourceDef, RESOURCE_TYPES } from './resources.js';
 
 import type { ResourceDef } from './resource-def.js';
@@ -113,27 +116,6 @@ export interface DocumentSchema {
 }
 
 const TOP_LEVEL_KEYS = ['version', 'workspace', 'resources'] as const;
-
-/**
- * `${env:NAME}` inside any string value.
- *
- * Two of these resources cannot be described at all without a secret — a
- * documentation source needs its provider token on create, a customer card
- * needs an `Authorization` header — and a config file in git is the one place
- * those must not be. An interpolation is the smallest thing that makes the
- * file usable, and it is narrow on purpose: this exact form, in a string, and
- * nothing else. No defaults, no shell, no file reads, no nesting.
- *
- * An UNSET variable is refused by name. It is not substituted with an empty
- * string, and that is the whole point: CLAUDE.md records both halves of this
- * failure — "a shell `read` cannot fail", where empty vars beat the sentinel
- * and a health check invented findings, and "env fallback reaches
- * production", where an unset variable became a localhost canonical URL on
- * every page. An empty token here would be POSTed, verified against the
- * provider, and fail with a message about the provider rather than about the
- * variable nobody exported.
- */
-const ENV_REF = /\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 export interface Issue {
   /** Dotted, and it is the path IN THE FILE: `resources.bots[2].slug`. */
@@ -258,43 +240,6 @@ function refuseUnknown(
 }
 
 /**
- * Substitute `${env:NAME}` throughout a value. Collects unset names.
- *
- * `env` is a parameter rather than a read of `process.env` so the spec can
- * drive it: a test that monkey-patches the process environment is a test that
- * leaks into its neighbours.
- */
-function interpolate(
-  value: unknown,
-  env: Readonly<Record<string, string | undefined>>,
-  missing: Set<string>,
-  used: Set<string>,
-): unknown {
-  if (typeof value === 'string') {
-    return value.replace(ENV_REF, (_match, name: string) => {
-      const found = env[name];
-      if (found === undefined || found === '') {
-        missing.add(name);
-        return '';
-      }
-      used.add(name);
-      return found;
-    });
-  }
-  if (Array.isArray(value)) {
-    return value.map((v) => interpolate(v, env, missing, used));
-  }
-  if (isPlainObject(value)) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = interpolate(v, env, missing, used);
-    }
-    return out;
-  }
-  return value;
-}
-
-/**
  * The workspace document: `chatly.json`, nine resource types, a `ck_` key.
  *
  * A resource whose `keySource` is `'server'` is refused by name (none is, now
@@ -305,10 +250,13 @@ function interpolate(
  */
 export const WORKSPACE_SCHEMA: DocumentSchema = {
   topLevelKeys: [...TOP_LEVEL_KEYS],
-  resourceKeys: RESOURCE_TYPES,
+  // `settings` is valid here and refused with a reason, the same treatment
+  // `channels` had before it got a natural key — see `refusedKeys` on
+  // `DocumentSchema` for why dropping it from the list reads worse.
+  resourceKeys: [...RESOURCE_TYPES, 'settings'],
   types: RESOURCE_TYPES,
   def: resourceDef,
-  refusedKeys: {},
+  refusedKeys: { settings: SETTINGS_REFUSAL },
   guard: (raw, issues) => {
     const value = raw['workspace'];
     if (value === undefined) {
@@ -469,7 +417,27 @@ function parseSection(
     return [];
   }
 
-  if (!Array.isArray(value)) {
+  /*
+   * A SINGLETON section is an OBJECT and the author writes no key (CH-24).
+   * It is wrapped into a list of one and stamped with `SINGLETON_KEY` — the
+   * same constant `ResourceDef.rowsFrom` stamps onto the live answer, so the
+   * two sides cannot drift into a create for a resource with no create route.
+   * An array is refused rather than accepted leniently: somebody who wrote
+   * `businessHours: [{...}]` has the wrong model of a thing there is one of.
+   */
+  const items: ReadonlyArray<unknown> =
+    def.singleton === true ? (isPlainObject(value) ? [value] : []) : (value as unknown[]);
+  if (def.singleton === true && !isPlainObject(value)) {
+    issues.push({
+      path: at,
+      message:
+        `must be a single ${def.label} object (it is ${Array.isArray(value) ? 'an array' : typeof value}). ` +
+        'There is exactly one per workspace, so this section is not a list — write the fields ' +
+        'directly under it.',
+    });
+    return [];
+  }
+  if (def.singleton !== true && !Array.isArray(value)) {
     issues.push({
       path: at,
       message: `must be an array of ${def.label} objects (it is ${typeof value}).`,
@@ -480,9 +448,13 @@ function parseSection(
   const rows: DocumentRow[] = [];
   const seen = new Map<string, string>();
 
-  for (let i = 0; i < value.length; i += 1) {
-    const path = `${at}[${String(i)}]`;
-    const row: unknown = value[i];
+  for (let i = 0; i < items.length; i += 1) {
+    const path = def.singleton === true ? at : `${at}[${String(i)}]`;
+    const raw: unknown = items[i];
+    const row: unknown =
+      def.singleton === true && isPlainObject(raw)
+        ? { ...raw, [def.naturalKey]: SINGLETON_KEY }
+        : raw;
     if (!isPlainObject(row)) {
       issues.push({ path, message: `must be an object, not ${typeof row}.` });
       continue;
@@ -531,6 +503,7 @@ function parseSection(
     }
 
     const missing = new Set<string>();
+    const mistaken = new Set<string>();
     const usedEnv = new Set<string>();
     const body: Record<string, unknown> = {};
     const refs: Record<string, DocumentRef> = {};
@@ -553,7 +526,7 @@ function parseSection(
          * token was masked and the live credential went out beside it.
          */
         const perField = new Set<string>();
-        body[field] = interpolate(rawValue, env, missing, perField);
+        body[field] = interpolate(rawValue, env, missing, perField, mistaken);
         if (perField.size > 0) {
           fromEnv.push(field);
           for (const name of perField) {
@@ -590,15 +563,12 @@ function parseSection(
           : { type: ref.type, key: rawValue };
     }
 
+    for (const name of mistaken) {
+      issues.push({ path, message: mistakenEnvRefMessage(name) });
+    }
+
     for (const name of missing) {
-      issues.push({
-        path,
-        message:
-          `\${env:${name}} is used here and ${name} is unset or empty. It is NOT substituted ` +
-          'with an empty string: an empty token would be sent, verified against the provider, ' +
-          'and fail with a message about the provider rather than about the variable nobody ' +
-          `exported. Export ${name} and run again.`,
-      });
+      issues.push({ path, message: missingEnvRefMessage(name) });
     }
 
     rows.push({ key: keyValue, path, body, refs, fromEnv });

@@ -30,59 +30,19 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 import { bool, str, type ParsedArgs } from '../args.js';
+import { pickChannel, type ChannelRow } from '../init/shared.js';
 import { FRAMEWORKS, NO_ATLAS, scaffold, type Framework } from '../init/templates.js';
 import { printJson } from '../output.js';
 
-import type { EmbedBlock, ScaffoldFile } from '../init/shared.js';
+import type { ScaffoldFile } from '../init/shared.js';
 import type { ChatlyClient } from '@chatlychat/sdk-node';
+
+/** Moved to `init/shared.ts` so `chatly csp` can pick the same channel. */
+export { pickChannel } from '../init/shared.js';
 
 const USAGE =
   `Usage: chatly init <${FRAMEWORKS.join('|')}> [--public-id <id>] [--identity hmac|atlas] ` +
   '[--dir <path>] [--dry-run] [--force]\n';
-
-interface ChannelRow {
-  readonly type?: unknown;
-  readonly name?: unknown;
-  readonly publicId?: unknown;
-  readonly enabled?: unknown;
-  readonly embed?: unknown;
-}
-
-/** The web channel to scaffold for, or a sentence saying why there is none. */
-export function pickChannel(
-  rows: ReadonlyArray<ChannelRow>,
-  publicId: string | undefined,
-): { publicId: string; embed: EmbedBlock } | { error: string } {
-  const web = rows.filter((r) => r.type === 'web' && typeof r.publicId === 'string');
-  const chosen =
-    publicId === undefined
-      ? web.length === 1
-        ? web[0]
-        : undefined
-      : web.find((r) => r.publicId === publicId);
-  if (chosen === undefined) {
-    if (publicId !== undefined) {
-      return { error: `No web channel with publicId "${publicId}" in this workspace.` };
-    }
-    if (web.length === 0) {
-      return { error: 'This workspace has no web channel. Create one in the dashboard first.' };
-    }
-    return {
-      error:
-        `This workspace has ${String(web.length)} web channels; name one with --public-id:\n` +
-        web.map((r) => `  ${String(r.publicId)}  ${String(r.name ?? '')}`).join('\n'),
-    };
-  }
-  const embed = chosen.embed as EmbedBlock | null | undefined;
-  if (embed === null || embed === undefined) {
-    return {
-      error:
-        `Channel ${String(chosen.publicId)} has no embed block: this deployment has not been told ` +
-        'where its widget is served from. Nothing was written.',
-    };
-  }
-  return { publicId: String(chosen.publicId), embed };
-}
 
 /** Where each framework's identity stub lives, and what to do with it. */
 const WIRE_IDENTITY: Readonly<Record<Framework, string>> = {
@@ -116,7 +76,11 @@ export function nextSteps(framework: Framework, identity: 'hmac' | 'atlas'): Rea
     );
   } else {
     steps.push(
-      'Set the channel to identityVerification.mode "oidc" with tokenProvider "atlas" and your instance id, and create the `chatly` JWT template in Atlas.',
+      // `atlasInstance` by name, and alone: it DERIVES the issuer, the key set
+      // and the audience, so the three cannot drift when a channel is
+      // re-created. `chatly doctor` reads the derivation back.
+      'Set the channel to identityVerification.mode "oidc", tokenProvider "atlas" and atlasInstance "<your instance id>" — do not also write issuer, jwksUri or audience; Chatly derives all three from the instance. Then create the `chatly` JWT template in Atlas.',
+      'Run `chatly doctor` to check the derived audience matches this channel — a channel re-created after the template was written leaves a stale `aud` that refuses every token silently.',
     );
   }
   steps.push(

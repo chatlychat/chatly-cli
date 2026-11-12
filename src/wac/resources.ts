@@ -38,15 +38,14 @@
  * refuses to touch a key that appears twice on either side instead of
  * guessing, which is the only honest thing to do with a key that can repeat.
  *
- * ── The resource that needed a key added ────────────────────────────────
+ * ── Where the defs live ─────────────────────────────────────────────────
  *
- * CHANNELS. `publicId` is a RESERVATION, not a name: `channels_public_id_unique`
- * is global, so another tenant may already hold `web`, and the server mints
- * one when none is sent. Until 2026-10-26 a `channels:` section was refused for
- * that reason. Migration 0680 added `channels.key`, a workspace-unique name the
- * author chooses, and the section matches on it. `publicId` stays an OUTPUT
- * (printed after `apply`); `type` is fixed at create; credentials inside
- * `config` are write-only per leaf; and `--prune` never deletes one.
+ * Most of them are below. Four are in files of their own, because this one
+ * reached the 650-line ceiling and each of those four has a story worth
+ * reading on its own: `resources-privacy.ts`, `resources-singletons.ts`
+ * (business hours and tone — one row per workspace), and
+ * `resources-channels.ts` (the resource that needed a natural key ADDED to
+ * the schema before a document could describe one).
  *
  * ═══ VERIFIED AGAINST HANDLERS, NOT AGAINST NAMES ════════════════════════
  *
@@ -95,18 +94,15 @@ export {
   routeForField,
 } from './resource-def.js';
 
-import { SERVER_OWNED } from './resource-shared.js';
+import * as cond from './resource-conditionals.js';
+import { asRecord, normaliseShortCode, SERVER_OWNED } from './resource-shared.js';
+import { CHANNELS } from './resources-channels.js';
 import { PRIVACY_PARTNERS } from './resources-privacy.js';
+import { BUSINESS_HOURS, TONE } from './resources-singletons.js';
 
 import type { ResourceDef } from './resource-def.js';
 
 /** Fields every row carries that no write path accepts. */
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
 
 /**
  * Dependency order, and it is the array order.
@@ -118,8 +114,15 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  */
 export const RESOURCES: ReadonlyArray<ResourceDef> = [
   PRIVACY_PARTNERS,
+  // The two workspace-wide singletons (CH-24). `settings` is deliberately
+  // NOT a third — see `resources-singletons.ts`.
+  BUSINESS_HOURS,
+  TONE,
+  CHANNELS,
   {
     type: 'brands',
+    readScope: 'workspace:read',
+    writeScope: 'workspace:write',
     label: 'brand',
     naturalKey: 'slug',
     keySource: 'authored',
@@ -142,6 +145,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'bots',
+    readScope: 'triggers:read',
+    writeScope: 'ai:configure',
     label: 'bot',
     naturalKey: 'slug',
     keySource: 'authored',
@@ -169,6 +174,7 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
      */
     remove: { path: '/v1/bots/{id}' },
     opaque: ['signingSecret', 'callbackToken', 'token', 'systemPrompt'],
+    discards: cond.BOT_DISCARDS,
     /*
      * `type: "external"` answers with a signing secret AND a `cb_` token,
      * flattened onto the bot object, each shown once, with no route that
@@ -213,6 +219,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'botRoutes',
+    readScope: 'triggers:read',
+    writeScope: 'triggers:write',
     label: 'routing rule',
     /*
      * `name`, which is both the only candidate and the weakest key here.
@@ -248,6 +256,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'triggers',
+    readScope: 'triggers:read',
+    writeScope: 'triggers:write',
     label: 'trigger',
     naturalKey: 'name',
     keySource: 'authored',
@@ -283,6 +293,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'macros',
+    readScope: 'macros:read',
+    writeScope: 'macros:write',
     label: 'macro',
     /*
      * `shortCode`, not `name`. The short code is what an agent types, it is
@@ -302,7 +314,7 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
      * refuses it for ever — a config file that is permanently broken by a
      * capital letter.
      */
-    normalizeKey: (key) => key.replace(/^\//, '').toLowerCase(),
+    normalizeKey: normaliseShortCode,
     /*
      * `@PaginationExempt`: a bare array, capped at 200 rows and ordered by
      * language rank then usage. NOT a page — the shared manifest flagged it
@@ -319,9 +331,12 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
     opaque: [],
     secrets: [],
     unwritable: [...SERVER_OWNED, 'usageCount', 'userId', 'createdByUserId'],
+    extraWarnings: cond.MACRO_WARNINGS,
   },
   {
     type: 'emailTemplates',
+    readScope: 'workspace:read',
+    writeScope: 'workspace:write',
     label: 'email template',
     /*
      * `kind`, which is also the id: the write is
@@ -385,6 +400,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'customerCards',
+    readScope: 'integrations:read',
+    writeScope: 'integrations:write',
     label: 'customer card',
     naturalKey: 'key',
     keySource: 'authored',
@@ -421,6 +438,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'webhooks',
+    readScope: 'integrations:read',
+    writeScope: 'integrations:write',
     label: 'webhook endpoint',
     /*
      * The URL. A webhook endpoint has no name and no key, and the URL is the
@@ -471,6 +490,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'docsSources',
+    readScope: 'kb:read',
+    writeScope: 'kb:write:sources',
     label: 'documentation source',
     /*
      * `label`. The alternatives are worse: `provider` repeats, `spaceId` is
@@ -505,6 +526,9 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
     // Disconnects the source and KEEPS the articles, re-labelled `manual`.
     // 200 with `{ kept: n }`. Safe enough to prune when asked.
     remove: { path: '/v1/docs-sources/{id}' },
+    // Is the source actually WORKING, which is not the same question as
+    // whether it matches this file (CH-05). See `resource-conditionals.ts`.
+    liveState: cond.docsSourceState,
     // The provider token is write-only; no DTO field carries it back.
     opaque: ['token'],
     secrets: [],
@@ -527,6 +551,8 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   },
   {
     type: 'aiTools',
+    readScope: 'ai:read',
+    writeScope: 'ai:write',
     label: 'AI tool',
     /*
      * `name`: `ai_custom_tools_name_unique` is a partial unique index on
@@ -548,78 +574,11 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
      * `signingSecretSet` instead of the values.
      */
     opaque: ['secretHeaders', 'signingSecret'],
+    discards: cond.AI_TOOL_DISCARDS,
     secrets: [],
     unwritable: [...SERVER_OWNED, 'secretHeaderNames', 'signingSecretSet'],
+    extraWarnings: cond.AI_TOOL_WARNINGS,
     project: (row) => ({ ...row, secretHeaders: undefined, signingSecret: undefined }),
-  },
-  {
-    type: 'channels',
-    label: 'channel',
-    /*
-     * `key` (migration 0680): a workspace-unique name the AUTHOR picks,
-     * enforced by a partial unique index. `publicId` cannot be the key — it is
-     * a globally unique reservation the server mints — so it is an OUTPUT:
-     * refused in a document (`unwritable`) and printed after `apply`.
-     * Channels that predate the column have no key and cannot be matched;
-     * `chatly channels set-key <id> <key>` adopts one.
-     */
-    naturalKey: 'key',
-    keySource: 'authored',
-    keyEnforced: true,
-    keyPattern: /^[a-z][a-z0-9-]{0,63}$/,
-    keylessHint:
-      'adopt one with `chatly channels set-key <id> <key>`, or a create here makes a second channel.',
-    list: { path: '/v1/channels', paged: false },
-    idField: 'id',
-    create: { path: '/v1/channels' },
-    /*
-     * No catch-all: `type` is fixed at create, so a changed `type` is reported
-     * as un-appliable instead of sent to a PATCH that strips it. `config` is
-     * merged by the server (RFC 7396), so it is compared on the keys named.
-     */
-    update: [
-      {
-        method: 'PATCH',
-        path: '/v1/channels/{id}',
-        fields: [
-          'name',
-          'enabled',
-          'config',
-          'autoCreateTickets',
-          'autoAcknowledge',
-          'acknowledgeTemplate',
-          'acknowledgeSubject',
-        ],
-      },
-    ],
-    updateBlocked:
-      '`type` is fixed at create. Give the new channel another `key` (the old one then shows ' +
-      'as on the server only) or delete it in the dashboard first.',
-    mergeFields: ['config'],
-    /*
-     * `DELETE /v1/channels/{id}` exists but is not key-accessible, and it
-     * detaches the channel's conversations. Not something `--prune` should do.
-     */
-    remove: null,
-    removeBlocked:
-      'a channel cannot be deleted with an API key, and deleting one detaches its conversations. ' +
-      'Delete it in the dashboard; `--prune` never will.',
-    /*
-     * Credentials live inside `config` and read back as `__redacted__`; they
-     * are split out per leaf in `diff.ts` (write-only, `--write-only` to push).
-     */
-    opaque: [],
-    secrets: [],
-    unwritable: [
-      ...SERVER_OWNED,
-      'publicId',
-      'originsRestricted',
-      'originWarnings',
-      'embed',
-      'brandId',
-      'lastMessageAt',
-      'staleEndpoints',
-    ],
   },
 ];
 

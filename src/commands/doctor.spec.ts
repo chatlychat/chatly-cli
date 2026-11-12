@@ -16,161 +16,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  exitCodeFor,
-  runChecks,
-  selectChannels,
-  type DoctorCheck,
-  type DoctorDeps,
-} from './doctor-checks.js';
-
-const PRESIGNED =
-  'https://uploads.chatlychat.com/chatly/workspaces/ws_1/uploads/u_1/x.png?X-Amz-Signature=deadbeef';
-
-interface Sent {
-  readonly url: string;
-  readonly method: string;
-  readonly headers: Record<string, string>;
-}
-
-/** A channel row shaped like `GET /v1/channels` returns one. */
-function channelRow(over: Record<string, unknown> = {}): Record<string, unknown> {
-  const embed = {
-    loaderUrl: 'https://widget.chatlychat.com/loader.js',
-    scriptOrigin: 'https://widget.chatlychat.com',
-    uploadOrigin: 'https://uploads.chatlychat.com',
-    fileOrigin: 'https://files.chatlychat.com',
-    deprecatedFileOrigins: [],
-    contentSecurityPolicy: {
-      scriptSrc: ['https://widget.chatlychat.com', "'sha256-abc'"],
-      connectSrc: [
-        'https://api.chatlychat.com',
-        'https://rt.chatlychat.com',
-        'wss://rt.chatlychat.com',
-        'https://uploads.chatlychat.com',
-      ],
-      imgSrc: ['https://files.chatlychat.com', 'data:', 'blob:'],
-      mediaSrc: ['https://files.chatlychat.com'],
-    },
-    ...((over['embed'] as Record<string, unknown>) ?? {}),
-  };
-  return {
-    id: 'ch_1',
-    publicId: 'web_live_1',
-    type: 'web',
-    originsRestricted: true,
-    config: { allowedOrigins: ['https://example.com'] },
-    ...over,
-    embed,
-  };
-}
-
-/**
- * A `fetch` that records every request and answers from a per-URL table.
- *
- * The default answer is a served JavaScript asset, so a test only states the
- * responses it is about — and a URL mapped to `null` REJECTS, which is what a
- * host that does not resolve does.
- */
-function stubFetch(
-  table: Record<string, { status: number; headers?: Record<string, string>; body?: string } | null>,
-  sent: Sent[],
-): typeof fetch {
-  return (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
-      headers[k.toLowerCase()] = v;
-    }
-    sent.push({ url, method: init?.method ?? 'GET', headers });
-    const match = Object.entries(table).find(([key]) => url.startsWith(key));
-    if (match !== undefined && match[1] === null) {
-      throw new TypeError('fetch failed');
-    }
-    const step = match?.[1] ?? {
-      status: 200,
-      headers: { 'content-type': 'application/javascript' },
-    };
-    /*
-     * `null` rather than `''` for a 204: the `Response` constructor REFUSES a
-     * body on a null-body status, and a 204 is the healthy answer to a CORS
-     * preflight — so the obvious `?? ''` makes the stub throw on exactly the
-     * case these tests are about.
-     */
-    const nullBody = step.status === 204 || step.status === 304;
-    return new Response(nullBody ? null : (step.body ?? ''), {
-      status: step.status,
-      headers: step.headers ?? {},
-    });
-  }) as unknown as typeof fetch;
-}
-
-function depsFor(
-  fetchFn: typeof fetch,
-  over: Partial<DoctorDeps> = {},
-): DoctorDeps & { healthCalls: number } {
-  const state = { healthCalls: 0 };
-  return {
-    fetchFn,
-    presign: async () => PRESIGNED,
-    health: async () => {
-      state.healthCalls += 1;
-      return [];
-    },
-    ...over,
-    get healthCalls(): number {
-      return state.healthCalls;
-    },
-  };
-}
-
-const pick = (checks: readonly DoctorCheck[], prefix: string): DoctorCheck => {
-  const found = checks.find((c) => c.name.startsWith(prefix));
-  if (found === undefined) {
-    throw new Error(`no check named ${prefix} in ${checks.map((c) => c.name).join(', ')}`);
-  }
-  return found;
-};
-
-/** The default world: everything serves, CORS is in effect, origins are set. */
-const HEALTHY: Record<
-  string,
-  { status: number; headers?: Record<string, string>; body?: string } | null
-> = {
-  [PRESIGNED]: { status: 204, headers: { 'access-control-allow-origin': '*' } },
-  'https://widget.chatlychat.com/version.json': {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      assets: {
-        'loader.js': {},
-        'widget.js': {},
-        'widget-engine.js': {},
-        'media/hold-music.wav': {},
-      },
-    }),
-  },
-  'https://api.chatlychat.com': { status: 404 },
-  'https://rt.chatlychat.com': { status: 404 },
-  'https://files.chatlychat.com': { status: 404 },
-  'https://uploads.chatlychat.com': { status: 400 },
-};
-
-async function check(
-  prefix: string,
-  rows: ReadonlyArray<Record<string, unknown>>,
-  table: typeof HEALTHY = HEALTHY,
-  opts: { origin?: string } = {},
-  over: Partial<DoctorDeps> = {},
-): Promise<{ check: DoctorCheck; sent: Sent[]; all: DoctorCheck[] }> {
-  const sent: Sent[] = [];
-  const all = await runChecks(
-    selectChannels(rows, undefined),
-    opts,
-    depsFor(stubFetch(table, sent), over),
-  );
-  return { check: pick(all, prefix), sent, all };
-}
+import { HEALTHY, PRESIGNED, channelRow, check } from './__tests__/doctor-fixtures.js';
 
 describe('upload.preflight — the check that earns the command', () => {
   it('sends the preflight a real browser sends, to the real presigned URL', async () => {
@@ -219,7 +65,7 @@ describe('upload.preflight — the check that earns the command', () => {
     expect(c.detail).toContain('403');
   });
 
-  it('warns rather than failing when the key cannot presign, and names the scope', async () => {
+  it('SKIPS rather than failing when the key cannot presign, and names the scope', async () => {
     const { check: c } = await check(
       'upload.preflight',
       [channelRow()],
@@ -229,7 +75,13 @@ describe('upload.preflight — the check that earns the command', () => {
         presign: () => Promise.reject(new Error('Missing permission: uploads:create')),
       },
     );
-    expect(c.verdict).toBe('warn');
+    /*
+     * The probe was never MADE, so this says nothing about the bucket in
+     * either direction — and `doctor`'s summary must not count it as an ok
+     * (CH-05). `warn` was the old answer and reads as "we looked and it is
+     * nearly fine".
+     */
+    expect(c.verdict).toBe('skip');
     expect(c.fix).toContain('uploads:create');
   });
 
@@ -469,78 +321,6 @@ describe('widget.origins', () => {
   });
 });
 
-describe('identity.jwks', () => {
-  const idv = (enabled: boolean): Record<string, unknown> =>
-    channelRow({
-      config: { allowedOrigins: ['https://example.com'], identityVerification: { enabled } },
-    });
-
-  it('is not asked for when no channel verifies visitors', async () => {
-    const sent: Sent[] = [];
-    const deps = depsFor(stubFetch(HEALTHY, sent));
-    const all = await runChecks(selectChannels([idv(false)], undefined), {}, deps);
-    expect(all.some((c) => c.name === 'identity.jwks')).toBe(false);
-    expect(deps.healthCalls).toBe(0);
-  });
-
-  it('reports the server’s own verdict, because the key set is resolved there', async () => {
-    /*
-     * `resolveOidcIssuers` is the ONE resolution and lives in a PRIVATE
-     * package, so this command cannot run it — see `DoctorDeps.health`. The
-     * verdict therefore comes from `GET /v1/integration-health`, which does.
-     */
-    const { check: c } = await check(
-      'identity.jwks',
-      [idv(true)],
-      HEALTHY,
-      {},
-      {
-        health: async () => [
-          { id: 'channel.origins', ok: true, detail: 'not this one', fix: null },
-          {
-            id: 'identity.jwks_reachable',
-            ok: false,
-            detail: '1 of 1 key set(s) could not be fetched: dns',
-            fix: 'Check the issuer host resolves.',
-          },
-        ],
-      },
-    );
-    expect(c.verdict).toBe('fail');
-    expect(c.detail).toContain('could not be fetched');
-    expect(c.fix).toBe('Check the issuer host resolves.');
-  });
-
-  it('treats ok:null as a warning, because not-determined is not broken', async () => {
-    const { check: c } = await check(
-      'identity.jwks',
-      [idv(true)],
-      HEALTHY,
-      {},
-      {
-        health: async () => [
-          { id: 'identity.jwks_reachable', ok: null, detail: 'not probed yet', fix: null },
-        ],
-      },
-    );
-    expect(c.verdict).toBe('warn');
-  });
-
-  it('warns when integration-health cannot be read', async () => {
-    const { check: c } = await check(
-      'identity.jwks',
-      [idv(true)],
-      HEALTHY,
-      {},
-      {
-        health: () => Promise.reject(new Error('Missing permission: workspace:read')),
-      },
-    );
-    expect(c.verdict).toBe('warn');
-    expect(c.fix).toContain('workspace:read');
-  });
-});
-
 describe('files.deprecated', () => {
   it('warns only when a host is actually being retired', async () => {
     const { all } = await check('upload.host', [channelRow()]);
@@ -551,32 +331,5 @@ describe('files.deprecated', () => {
     ]);
     expect(c.verdict).toBe('warn');
     expect(c.detail).toContain('old.chatlychat.com');
-  });
-});
-
-describe('channel selection and the exit code', () => {
-  it('ignores a non-web channel, which has no embed and so no install', async () => {
-    expect(selectChannels([{ id: 'ch_2', type: 'whatsapp', embed: null }], undefined)).toEqual([]);
-  });
-
-  it('matches --channel on the publicId or the id', () => {
-    const rows = [channelRow(), channelRow({ id: 'ch_2', publicId: 'web_live_2' })];
-    expect(selectChannels(rows, 'web_live_2').map((c) => c.id)).toEqual(['ch_2']);
-    expect(selectChannels(rows, 'ch_1').map((c) => c.id)).toEqual(['ch_1']);
-    expect(selectChannels(rows, 'nope')).toEqual([]);
-  });
-
-  it('warns, and does not pass, when the credential sees no web channel', async () => {
-    const all = await runChecks([], {}, depsFor(stubFetch({}, [])));
-    expect(all).toHaveLength(1);
-    expect(all[0]?.verdict).toBe('warn');
-    expect(exitCodeFor(all)).toBe(0);
-  });
-
-  it('exits non-zero on a failure and zero on warnings alone', () => {
-    const w = { name: 'a', verdict: 'warn', detail: '', fix: null } as const;
-    const f = { name: 'b', verdict: 'fail', detail: '', fix: null } as const;
-    expect(exitCodeFor([w, w])).toBe(0);
-    expect(exitCodeFor([w, f])).toBe(1);
   });
 });

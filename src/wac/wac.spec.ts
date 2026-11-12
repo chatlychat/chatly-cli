@@ -401,13 +401,27 @@ describe('buildPlan', () => {
     expect(plan.warnings.join(' ')).toContain('does not make `name` unique');
   });
 
-  it("warns about a field no live row carries, from the server's own vocabulary", () => {
+  /*
+   * This asserted the LIVE-ROW heuristic, which the route's declared rules
+   * superseded on 2026-11-06. Both ran for a while and an integrator got two
+   * warnings for one misspelt field. The heuristic's own text was also wrong
+   * where the table is right — it asserts "zod STRIPS an unknown key", which
+   * is false for the 175 strict schemas in this API.
+   *
+   * So the field is still named, once, from what the route DECLARES.
+   */
+  it('warns once about a misspelt field, from what the route declares', () => {
     const parsed = parseDocument(doc({ brands: [{ slug: 'acme', nmae: 'Acme' }] }));
     const plan = buildPlan(parsed, live({ brands: [{ id: 'b1', slug: 'other', name: 'Other' }] }));
     const text = plan.warnings.join('\n');
     expect(text).toContain('`nmae`');
-    expect(text).toContain('zod STRIPS an unknown key');
+    expect(text).toContain('not a field');
+    // The field it should have been is offered.
     expect(text).toContain('name');
+    // Exactly one warning mentions the misspelling, not two.
+    expect(plan.warnings.filter((w) => w.includes('`nmae`'))).toHaveLength(1);
+    // And the heuristic's false claim is gone from this path.
+    expect(text).not.toContain('zod STRIPS an unknown key');
   });
 
   it('says nothing about a type the document does not mention', () => {

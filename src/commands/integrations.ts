@@ -8,6 +8,7 @@
  */
 import { bool, str, type ParsedArgs } from '../args.js';
 import { itemsOf, printJson, printTable } from '../output.js';
+import { verifyEventsSecret } from './atlas-verify.js';
 import {
   bodyFrom,
   need,
@@ -485,6 +486,13 @@ export async function channels(chatly: ChatlyClient, args: ParsedArgs): Promise<
       }
       return showObject(await chatly.request('GET', path));
     }
+    /*
+     * Does the stored Atlas events secret match the one Atlas signs with
+     * (CH-26)? Signs a test event locally and asks the receiver. Exits
+     * non-zero when it does not verify, so it works as a deploy gate.
+     */
+    case 'verify-events-secret':
+      return verifyEventsSecret(chatly, args, process.env);
     case 'rotate-secret':
       // The inbound webhook signing secret, shown once.
       return showObject(

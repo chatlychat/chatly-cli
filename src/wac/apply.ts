@@ -355,7 +355,20 @@ export function renderOutcomes(outcomes: ReadonlyArray<ApplyOutcome>): string {
     lines.push('', `Skipped (${String(skipped.length)}) — not attempted`);
     for (const o of skipped) {
       lines.push(`  · ${o.type}/${o.key}`);
-      lines.push(`      ${o.detail ?? 'no detail recorded, which is itself a bug.'}`);
+      /*
+       * A BLOCKED row's detail is its plan reason, and `apply` prints the
+       * whole plan immediately above this — so repeating it put the same
+       * sentence on screen twice (ForgeDeck 2026-11-06 item 4, reproduced
+       * twice, and noted in the report before that one).
+       *
+       * The other way a row is skipped is a DEPENDENCY that failed, and that
+       * detail is new: no plan could have known the write would fail. So this
+       * is keyed on the action rather than on comparing strings, which would
+       * also hide the dependency case whenever its wording happened to match.
+       */
+      if (o.action !== 'blocked') {
+        lines.push(`      ${o.detail ?? 'no detail recorded, which is itself a bug.'}`);
+      }
     }
   }
   if (kept.length > 0) {

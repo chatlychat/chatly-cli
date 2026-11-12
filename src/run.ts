@@ -18,6 +18,7 @@ import * as ai from './commands/ai.js';
 import * as apiKeysCmd from './commands/api-keys.js';
 import * as auth from './commands/auth.js';
 import * as config from './commands/config.js';
+import * as cspCmd from './commands/csp.js';
 import * as deliveriesCmd from './commands/deliveries.js';
 import * as doctorCmd from './commands/doctor.js';
 import * as evalsCmd from './commands/evals.js';
@@ -42,7 +43,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.9.7';
+const VERSION = '0.11.0';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -64,7 +65,15 @@ export const COMMANDS: Readonly<
   Record<string, (c: ChatlyClient, a: ParsedArgs) => Promise<number>>
 > = {
   // ── Core ──────────────────────────────────────────────────────────────
-  whoami: async (c, a) => auth.whoami(c, a),
+  /*
+   * `--for plan|apply|doctor|all` answers "does this key hold enough"
+   * (CH-17), and it lives in `workspace-as-code.ts` because the answer is
+   * derived from the resource table `plan` and `apply` drive — a command
+   * module must not import another command module, and this file already
+   * imports both.
+   */
+  whoami: async (c, a) =>
+    str(a.flags, 'for') === undefined ? auth.whoami(c, a) : wac.whoamiFor(c, a),
   /*
    * Beside `whoami` because it is the other half of credential handling, and
    * because it is what makes `secret keypair` / `secret open` a usable pair
@@ -146,6 +155,15 @@ export const COMMANDS: Readonly<
    * exists for are visible at all. Exits non-zero on a failed check.
    */
   doctor: doctorCmd.doctor,
+
+  /*
+   * The widget's CSP sources, regenerable (CH-13). Beside `doctor` and
+   * `init` rather than under either: `init` writes it once at scaffold time
+   * and `doctor` only CHECKS a policy, and what was missing is the build
+   * step in between — a command a `prebuild` can run on every deploy so a
+   * Chatly host change needs no edit to the integrator's own files.
+   */
+  csp: cspCmd.csp,
 
   // ── Install ───────────────────────────────────────────────────────────
   // Writes files into the current project from the web channel's own embed

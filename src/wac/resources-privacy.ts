@@ -29,7 +29,12 @@ import type { ResourceDef } from './resource-def.js';
  * therefore the route's own refusal says, and a warning that names a
  * different type than the error sends the reader to the wrong line.
  */
-function wrongJsonType(where: string, field: string, value: unknown): string | undefined {
+function wrongJsonType(
+  where: string,
+  field: string,
+  value: unknown,
+  sent: boolean,
+): string | undefined {
   if (value === undefined || value === null || typeof value === 'string') {
     return undefined;
   }
@@ -37,10 +42,23 @@ function wrongJsonType(where: string, field: string, value: unknown): string | u
   // "Quote it" is the fix for a scalar and nonsense for a container.
   const advice = kind === 'number' || kind === 'boolean' ? ' Quote it.' : '';
   const article = kind === 'array' || kind === 'object' ? 'an' : 'a';
-  return (
-    `${where}: \`${field}\` is ${article} ${kind} and the route requires a string, so the ` +
-    `write will be refused.${advice}`
-  );
+  /*
+   * ForgeDeck's EIGHTH report, 2026-11-06 item 1: this said "the write will be
+   * refused" on a row `apply` does not send, which is the mismatch the
+   * SEVENTH report fixed for the stray-secret message ONE BRANCH BELOW. The
+   * wording was taken from a rule that is always sent and reused by a rule
+   * that is not. A credential is excluded from the diff, so a wrong-type
+   * `completionSecret` on an otherwise-matching row plans as `unchanged` and
+   * nothing is written.
+   *
+   * Still worth saying: the document is wrong either way, and a reader who
+   * fixes the row later wants to know now.
+   */
+  return sent
+    ? `${where}: \`${field}\` is ${article} ${kind} and the route requires a string, so the ` +
+        `write will be refused.${advice}`
+    : `${where}: \`${field}\` is ${article} ${kind} and the route requires a string, so it ` +
+        `would be refused if sent — it is not sent on this run.${advice}`;
 }
 
 export const PRIVACY_PARTNERS: ResourceDef =
@@ -102,6 +120,8 @@ export const PRIVACY_PARTNERS: ResourceDef =
    */
   {
     type: 'privacyPartners',
+    readScope: 'workspace:read',
+    writeScope: 'workspace:write',
     label: 'privacy partner',
     naturalKey: 'provider',
     keySource: 'authored',
@@ -121,6 +141,12 @@ export const PRIVACY_PARTNERS: ResourceDef =
     remove: { path: '/v1/privacy/partners/{id}' },
     removeBlocked: undefined,
     opaque: ['completionSecret'],
+    /*
+     * This resource warns about these three itself, below, worded by whether
+     * the row is SENT. Without this the generic table check fires too and
+     * every one printed twice.
+     */
+    ownTypeChecks: ['cbid', 'completionsUrl', 'completionSecret'],
     /*
      * `provider` is the natural key and is checked by the key machinery;
      * `cbid` is an ordinary required body field and was not checked anywhere.
@@ -186,8 +212,9 @@ export const PRIVACY_PARTNERS: ResourceDef =
          * All three string fields, in document order. `requiredFields`
          * catches absent, null and blank; a wrong TYPE passes all three.
          */
+        const sent = willSend(row.key);
         for (const field of ['cbid', 'completionsUrl', 'completionSecret'] as const) {
-          const message = wrongJsonType(where, field, row.body[field]);
+          const message = wrongJsonType(where, field, row.body[field], sent);
           if (message !== undefined) {
             out.push(message);
           }
@@ -222,7 +249,7 @@ export const PRIVACY_PARTNERS: ResourceDef =
            * it, which is why this asks the plan rather than comparing fields.
            */
           out.push(
-            willSend(row.key)
+            sent
               ? `${where}: \`completionSecret\` is set with no \`completionsUrl\`, and none is ` +
                   'stored, so the server refuses it — a secret with nowhere to report signs ' +
                   'nothing.'
@@ -253,11 +280,43 @@ export const PRIVACY_PARTNERS: ResourceDef =
          * A warning that a safe, working document will fail is worse than
          * silence: it teaches the reader to ignore warnings.
          */
-        if (secret === undefined && live?.['completionSecretSet'] !== true) {
+        /*
+         * ForgeDeck's eighth report item 4: `completionSecret: null` beside a
+         * good URL planned clean and `apply` answered 400. The route resolves
+         * `input.completionSecret === undefined ? stored : input.completionSecret`
+         * (privacy-partner.service.ts:222) and then refuses a non-null URL
+         * with a null secret — so an EXPLICIT null is not "leave it alone", it
+         * overrides a stored secret too. That is why `completionSecretSet`
+         * only rescues the ABSENT case.
+         *
+         * A comment here used to claim `requiredFields` covered absent, null
+         * and blank for this field. `requiredFields` lists `cbid` and nothing
+         * else; it never saw this one.
+         */
+        const stored = live?.['completionSecretSet'] === true;
+        const secretResolvesNull = secret === null || (secret === undefined && !stored);
+        if (secretResolvesNull) {
+          /*
+           * Worded by whether the row is SENT and by whether a secret is
+           * actually stored — the third of the three warnings in this file to
+           * need it, reported 2026-11-06 after the other two were fixed.
+           *
+           * The unchanged-row case is the one that read falsely: a credential
+           * is kept out of the diff, so a row carrying only an explicit
+           * `completionSecret: null` plans as `unchanged`, nothing is sent,
+           * and the line claimed the server refuses it AND that none is
+           * stored while one was.
+           */
           out.push(
-            `${where}: \`completionsUrl\` is set with no \`completionSecret\` and none is ` +
-              'stored, so the server refuses it — a URL with nothing to sign with reports ' +
-              'nothing. Add the `whsec_…` the provider gave you.',
+            sent
+              ? `${where}: \`completionsUrl\` is set and \`completionSecret\` resolves to ` +
+                  `null${stored ? ' (an explicit null overrides the stored one)' : ' and none is stored'}, ` +
+                  'so the server refuses it — a URL with nothing to sign with reports nothing. ' +
+                  'Add the `whsec_…` the provider gave you.'
+              : `${where}: \`completionSecret\` is null, which would leave \`completionsUrl\` ` +
+                  'with nothing to sign with and be refused if sent — this row is unchanged, so ' +
+                  'nothing is sent on this run. A credential is never part of the diff; pass ' +
+                  '`--write-only` to send it.',
           );
         }
 

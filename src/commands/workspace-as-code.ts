@@ -39,7 +39,7 @@
  * and `pac/`. Everything in `wac/` is shared: this file is the workspace's
  * reader and command wiring, and nothing more.
  */
-import { bool, type ParsedArgs } from '../args.js';
+import { bool, str, type ParsedArgs } from '../args.js';
 import { printJson } from '../output.js';
 import { unverified } from './platform-as-code.js';
 import { renderOutcomes, type ApplyOptions } from '../wac/apply.js';
@@ -49,7 +49,14 @@ import { execute } from '../wac/execute.js';
 import { loadFrom } from '../wac/load.js';
 import { planFooter, planForJson, renderPlan } from '../wac/render.js';
 import { naturalKeys, resourceDef } from '../wac/resources.js';
+import {
+  missingScopes,
+  scopesFor,
+  SCOPED_COMMANDS,
+  type ScopedCommand,
+} from '../wac/scopes.js';
 
+import type { ResourceDef } from '../wac/resource-def.js';
 import type { ChatlyClient, Page } from '@chatlychat/sdk-node';
 
 /** Looked for in order when `--file` is absent. */
@@ -89,6 +96,58 @@ export function loadDocument(args: ParsedArgs, env: NodeJS.ProcessEnv = process.
 /* ── Reading the live workspace ───────────────────────────────────────── */
 
 /**
+ * Types this document REFERENCES without declaring a section for them.
+ *
+ * ForgeDeck 2026-11-07 item 4, reproduced twice: a document carrying only
+ * `botRoutes`, each naming a bot that exists on the server, planned every row
+ * as `BLOCKED — names bots/fd-bot, which is neither on the server nor created
+ * by this plan`. The bot WAS on the server; nothing had looked.
+ *
+ * `known` in `buildPlan` is built from the declared sections, so an
+ * undeclared type has no entry and every reference into it fails. The
+ * platform document already had the answer for exactly this shape
+ * (`PlanOptions.referenced`, CHT-F04: an `apiKeys` row naming a tenant
+ * somebody else created) and the workspace command simply never passed it —
+ * its own doc comment said "Empty for the workspace document."
+ *
+ * The alternative the message itself suggests — declare `resources.bots` —
+ * is worse than it sounds: a document that declares a section owns it, so
+ * every bot the file does not list becomes an orphan line, and `--prune`
+ * would offer to delete them.
+ *
+ * Reading them costs one GET per referenced type, and only for a document
+ * that does not declare it.
+ */
+export function referencedDefs(doc: WacDocument): ReadonlyArray<ResourceDef> {
+  const declared = new Set(doc.sections.map((sec) => sec.def.type));
+  const out = new Map<string, ResourceDef>();
+  for (const section of doc.sections) {
+    for (const ref of Object.values(section.def.references ?? {})) {
+      if (declared.has(ref.type) || out.has(ref.type)) {
+        continue;
+      }
+      const def = resourceDef(ref.type);
+      if (def !== undefined) {
+        out.set(ref.type, def);
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Those types as `buildPlan` wants them: resolvable by a reference, never
+ * planned, never an orphan. Built from the same list the reader used, so a
+ * type that was fetched is a type that can be resolved.
+ */
+function referencedSections(
+  doc: WacDocument,
+  live: ReadonlyMap<string, LiveSection>,
+): ReadonlyArray<{ def: ResourceDef; section: LiveSection }> {
+  return referencedDefs(doc).map((def) => ({ def, section: live.get(def.type) ?? { rows: [] } }));
+}
+
+/**
  * The live rows for every type the document mentions, and nothing else.
  *
  * All through `chatly.request` — the escape hatch CONTRACT.md defines — so
@@ -101,8 +160,7 @@ export async function readLive(
   doc: WacDocument,
 ): Promise<Map<string, LiveSection>> {
   const out = new Map<string, LiveSection>();
-  for (const section of doc.sections) {
-    const { def } = section;
+  for (const def of [...doc.sections.map((sec) => sec.def), ...referencedDefs(doc)]) {
     if (def.list.paged) {
       const rows: Array<Record<string, unknown>> = [];
       let cursor: string | undefined;
@@ -131,7 +189,18 @@ export async function readLive(
       continue;
     }
     const answer = await chatly.request<unknown>('GET', def.list.path);
-    const all = Array.isArray(answer) ? (answer as Array<Record<string, unknown>>) : [];
+    /*
+     * `rowsFrom` first: a SINGLETON route answers one object, not a list.
+     * `/v1/workspace/business-hours` and `/v1/ai/tone` are the two (CH-24),
+     * and `Array.isArray` alone reads both as "no rows", which plans a create
+     * for a resource that has no create route at all.
+     */
+    const all =
+      def.rowsFrom !== undefined
+        ? [...def.rowsFrom(answer)]
+        : Array.isArray(answer)
+          ? (answer as Array<Record<string, unknown>>)
+          : [];
     /*
      * `possiblyTruncated` is judged on what the SERVER returned, before
      * `existsWhen` — the question it answers is whether the route hit its
@@ -168,7 +237,13 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
   }
 
   const live = await readLive(chatly, doc);
-  const built = buildPlan(doc, live, { writeOnly: bool(args.flags, 'write-only') });
+  const built = buildPlan(doc, live, {
+    writeOnly: bool(args.flags, 'write-only'),
+    // `--rotate-secret`: the credentials inside a merge-written field and
+    // nothing else unreadable. See `PlanOptions.rotateSecrets`.
+    rotateSecrets: bool(args.flags, 'rotate-secret'),
+    referenced: referencedSections(doc, live),
+  });
   const opts = { prune: bool(args.flags, 'prune'), pruneUnsafe: built.pruneUnsafe };
 
   if (bool(args.flags, 'json')) {
@@ -188,6 +263,21 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
    * request failed, and conflating "there is drift" with "the call errored"
    * is how a drift alarm becomes a flake alarm.
    */
+  /*
+   * 3 for a resource that matches the file and is BROKEN (CH-05), answered
+   * whether or not `--exit-code` was passed.
+   *
+   * Every other non-zero code here is opt-in because `chatly plan` has to be
+   * safe to run under `set -e` just to look at a diff. This one is not drift
+   * and not a prediction — it is the server reporting that a documentation
+   * source has failed its last sync — and FormFlow runs `plan` as a deploy
+   * gate precisely so that a broken knowledge base stops a deploy. A gate
+   * that has to be opted into is a gate that was off on the day it mattered.
+   */
+  if (built.unhealthy.length > 0) {
+    return 3;
+  }
+
   if (bool(args.flags, 'exit-code')) {
     /*
      * 3 before 2, because a pipeline wants to tell them apart: 2 is "production
@@ -196,11 +286,19 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
      * (2026-11-06 item 3) had seven unapplyable documents exit 2, the same code
      * a good change exits, so nothing downstream could distinguish them.
      */
-    if (built.refused.length > 0) {
+    const counts = tally(built);
+    /*
+     * A BLOCKED row answers 3 as well, because this CLI will not send it: the
+     * document will not apply, which is what 3 means here and what `--help`
+     * says. It answered 2 — the code a good change exits — so a pipeline
+     * gating on 3 passed an unapplyable file and failed at `apply` instead.
+     * Reported 2026-11-06, and it is the fifth report's item 3 surviving in
+     * the one case that report did not cover.
+     */
+    if (built.refused.length > 0 || counts.blocked > 0) {
       return 3;
     }
-    const counts = tally(built);
-    return counts.create + counts.update + counts.blocked > 0 ? 2 : 0;
+    return counts.create + counts.update > 0 ? 2 : 0;
   }
   return built.items.some((i) => i.action === 'blocked') ? 1 : 0;
 }
@@ -261,7 +359,12 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
 
   const live = await readLive(chatly, doc);
   const writeOnly = bool(args.flags, 'write-only');
-  const built = buildPlan(doc, live, { writeOnly });
+  const rotateSecrets = bool(args.flags, 'rotate-secret');
+  const built = buildPlan(doc, live, {
+    writeOnly,
+    rotateSecrets,
+    referenced: referencedSections(doc, live),
+  });
   const opts: ApplyOptions = {
     prune: bool(args.flags, 'prune'),
     pruneUnsafe: built.pruneUnsafe,
@@ -282,7 +385,10 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
    * would report every opaque field as a change forever.
    */
   const liveAfter = await readLive(chatly, doc);
-  const after = buildPlan(doc, liveAfter, { writeOnly: false });
+  const after = buildPlan(doc, liveAfter, {
+    writeOnly: false,
+    referenced: referencedSections(doc, liveAfter),
+  });
   const mismatches = unverified(after, opts.prune);
   const publicIds = channelPublicIds(doc, liveAfter);
   /*
@@ -299,12 +405,30 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
    * the form that gets acted on automatically.
    */
   const failed = outcomes.some((o) => o.state === 'failed' || o.state === 'skipped');
+  /*
+   * A resource that matches the document and is FAILING on the server
+   * (CH-05). The read-back compares the file against the live row and they
+   * agree, so `mismatches` is empty and every write succeeded — and
+   * "everything matches the document" is then a true sentence that reads as
+   * an all-clear over a knowledge source that has not synced in a week. Same
+   * defect as the two notes below, arriving from the other side: there the
+   * summary over-claimed about writes, here about health.
+   */
+  const unhealthy = after.unhealthy;
+  /*
+   * ForgeDeck's eighth report item 1: "the rows that were written match the
+   * document" was printed on a run where NO row was written — every row
+   * failed. The sentence was written for the mixed case and is the only one
+   * that fires once `failed` is true.
+   */
+  const wrote = outcomes.some((o) => o.state === 'applied');
   if (bool(args.flags, 'json')) {
     printJson({
       outcomes,
       warnings: built.warnings,
       verified: mismatches.length === 0 && !failed,
       mismatches,
+      unhealthy,
       publicIds,
     });
   } else {
@@ -316,14 +440,164 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
       mismatches.length > 0
         ? `\nRead back: ${String(mismatches.length)} item(s) still differ from the document:\n` +
             mismatches.map((m) => `  ${m}\n`).join('')
-        : failed
-          ? '\nRead back: the rows that were written match the document. The failed row(s) ' +
-            'above are NOT confirmed — a write-only value cannot be read back.\n'
-          : '\nRead back: everything matches the document.\n',
+        : !failed
+          ? unhealthy.length > 0
+            ? `\nRead back: every field matches the document, but ${String(unhealthy.length)} ` +
+              `resource(s) are FAILING on the server (${unhealthy.join(', ')}). The plan above ` +
+              'says why. Nothing here can fix that — it is not a configuration difference.\n'
+            : '\nRead back: everything matches the document.\n'
+          : wrote
+            ? '\nRead back: the rows that were written match the document. The failed row(s) ' +
+              'above are NOT confirmed — a write-only value cannot be read back.\n'
+            : '\nRead back: nothing was written, so there is nothing to confirm. The failed ' +
+              'row(s) above are listed with their reasons.\n',
     );
   }
+  /*
+   * An unhealthy resource does NOT make `apply` exit non-zero: `apply`
+   * reports what it wrote, and it wrote everything the document asked for.
+   * `plan` is the command that answers 3 for this, and the sentence above is
+   * what stops the run reading as an all-clear.
+   */
   return failed || mismatches.length > 0 ? 1 : 0;
 }
 
 /** Re-exported: it moved to `wac/execute.ts` so `chatly platform apply` shares it. */
 export { execute } from '../wac/execute.js';
+
+
+/* ── whoami --for ─────────────────────────────────────────────────────── */
+
+/**
+ * `chatly whoami --for plan|apply|doctor|all` — does this key hold enough
+ * (CH-17)?
+ *
+ * Here rather than in `commands/auth.ts` because the answer is derived from
+ * the resource table these two commands drive, and a command module must not
+ * depend on another command module. `run.ts` routes `--for` to this and
+ * everything else to `auth.whoami`.
+ *
+ * It reads `GET /v1/api-keys/whoami` ONCE and answers from the scopes the
+ * server says the credential carries. It issues no other request: probing a
+ * write to find out whether it is allowed is not a thing a readiness check
+ * may do.
+ *
+ * Exits 1 when a scope is missing, so this is a CI step — a key that cannot
+ * run the deploy should fail the job that is about to use it, not the deploy.
+ */
+export async function whoamiFor(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
+  const asked = str(args.flags, 'for') ?? 'all';
+  if (!(SCOPED_COMMANDS as ReadonlyArray<string>).includes(asked)) {
+    process.stderr.write(
+      `--for takes one of ${SCOPED_COMMANDS.join(', ')} (got "${asked}").\n`,
+    );
+    return 2;
+  }
+  const wanted: ReadonlyArray<ScopedCommand> =
+    asked === 'all' ? ['plan', 'apply', 'doctor'] : [asked as ScopedCommand];
+
+  /*
+   * The document, when there is one. `plan` and `apply` read and write only
+   * the types their file declares, so answering for all thirteen resources
+   * would report `macros:read` missing for a document with no macros —
+   * a false alarm on the one command whose whole job is to prevent them.
+   *
+   * A document that is absent or will not parse is not an error here: the
+   * answer widens to every resource type and says so, because somebody
+   * asking what a key needs may not have written the file yet.
+   */
+  let doc: WacDocument | undefined;
+  let why: string | undefined;
+  try {
+    doc = loadDocument(args);
+  } catch (err) {
+    why = err instanceof Error ? err.message.split('\n')[0] : String(err);
+  }
+
+  const me = await chatly.request<{
+    workspaceId?: unknown;
+    scopes?: unknown;
+    expiresAt?: unknown;
+  }>('GET', '/v1/api-keys/whoami');
+  const held = Array.isArray(me.scopes) ? me.scopes.filter((s): s is string => typeof s === 'string') : [];
+
+  const report = wanted.map((command) => {
+    const needed = scopesFor(command, command === 'doctor' ? undefined : doc);
+    return { command, needed, missing: missingScopes(held, needed) };
+  });
+  const short = report.flatMap((r) => r.missing);
+
+  if (bool(args.flags, 'json')) {
+    printJson({
+      workspaceId: me.workspaceId ?? null,
+      scopes: held,
+      expiresAt: me.expiresAt ?? null,
+      expiryWarning: expiryWarning(me.expiresAt),
+      document: doc === undefined ? null : doc.sections.map((sec) => sec.def.type),
+      commands: report,
+      ok: short.length === 0,
+    });
+    return short.length === 0 ? 0 : 1;
+  }
+
+  process.stdout.write(`workspace  ${String(me.workspaceId ?? '(unknown)')}\n`);
+  process.stdout.write(`scopes     ${held.length === 0 ? '(none)' : held.join(', ')}\n`);
+  for (const { command, needed, missing } of report) {
+    process.stdout.write(
+      missing.length === 0
+        ? `${command.padEnd(10)} ok — holds all ${String(needed.length)} scope(s) it needs\n`
+        : `${command.padEnd(10)} MISSING ${missing.join(', ')}\n`,
+    );
+  }
+  if (doc === undefined) {
+    process.stdout.write(
+      `\nNo workspace document was read (${why ?? 'none found'}), so plan and apply are ` +
+        'answered for EVERY resource type. Point --file at your chatly.yaml for the narrow ' +
+        'answer.\n',
+    );
+  }
+  const expiry = expiryWarning(me.expiresAt);
+  if (expiry !== null) {
+    process.stdout.write(`\n${expiry}\n`);
+  }
+  if (short.length > 0) {
+    process.stdout.write(
+      '\nAdd them in the dashboard under Workspace → Integrations → Developer → API keys, ' +
+      'or mint a replacement with ' +
+        '`chatly api-keys create`. `chatly workspace key-scopes` lists every scope there is.\n',
+    );
+  }
+  return short.length === 0 ? 0 : 1;
+}
+
+/**
+ * The 60-day expiry warning (CH-17).
+ *
+ * `readiness.key_expiry` already exists and `chatly doctor` already prints
+ * it — but the SERVER computes it, at 30 days, and that threshold is not
+ * this CLI's to move (`apps/api/src/modules/workspaces/workspace-readiness.ts`).
+ * 60 days is the number FormFlow asked for, and the CLI has the date in hand
+ * from the same read it is already making, so it says so here. The server's
+ * 30-day verdict still arrives through `doctor`; this is earlier, not
+ * instead.
+ */
+function expiryWarning(expiresAt: unknown): string | null {
+  if (typeof expiresAt !== 'string' || expiresAt === '') {
+    return null;
+  }
+  const at = Date.parse(expiresAt);
+  if (Number.isNaN(at)) {
+    return null;
+  }
+  const days = Math.floor((at - Date.now()) / 86_400_000);
+  if (days < 0) {
+    return `This key EXPIRED on ${expiresAt}. Rotate it: see Rotating a CI key in https://chatlychat.com/docs/sdk-cli.`;
+  }
+  if (days > 60) {
+    return null;
+  }
+  return (
+    `This key expires in ${String(days)} day(s), on ${expiresAt}. Rotating needs ` +
+    '`api_keys:write` — see Rotating a CI key in https://chatlychat.com/docs/sdk-cli.'
+  );
+}

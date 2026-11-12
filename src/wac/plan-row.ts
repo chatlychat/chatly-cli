@@ -19,6 +19,7 @@
  * and `import type` is erased.
  */
 import { fullReplaceWarnings } from './diff-warnings.js';
+import { droppedFields } from './field-rules-checks.js';
 import { routeForField } from './resources.js';
 import { isRedacted, narrowTo, REDACTED, sameValue, splitRedacted } from './values.js';
 
@@ -180,6 +181,13 @@ function planUpdate(
    */
   const changes: FieldChange[] = [];
   const extra = [...notes];
+  // Not a diff: the live row is broken on its own terms. `diff.ts` collects
+  // the same verdict into `Plan.unhealthy` for the exit code. See
+  // `ResourceDef.liveState`.
+  const state = def.liveState?.(liveRow);
+  if (state !== undefined) {
+    extra.push(state.note);
+  }
 
   const compare = (name: string, desired: unknown): void => {
     // A parented row's child key is HALF its natural key (`acme/ops@…`), so
@@ -204,15 +212,36 @@ function planUpdate(
       const s = splitRedacted(liveRow[name], desired);
       if (s.redacted) {
         const route = routeForField(def, name);
-        if (opts.writeOnly === true) {
-          changes.push({ name, from: undefined, to: desired, route });
-          extra.push(
-            `${name} holds redacted credentials; --write-only sends it without a comparison.`,
-          );
+        /*
+         * The LEAVES by name, not "holds credentials" (CH-26).
+         *
+         * An operator who has just written `identityVerification.eventsSecret`
+         * reads this line to find out what happened to it, and the old
+         * wording could not tell them whether the field they wrote was the
+         * one being skipped — or whether it was set at all. The paths are the
+         * answer, and `${REDACTED}` reading back IS the answer to "is it
+         * set": a leaf that is absent on the server is not redacted and shows
+         * up as an ordinary change instead.
+         *
+         * Empty paths (a whole merge field redacted at its root) fall back to
+         * the field name, which is all there is to say about it.
+         */
+        const leaves = s.paths.filter((p) => p !== '');
+        const named = leaves.length > 0 ? leaves.join(', ') : name;
+        const flag = opts.writeOnly === true ? '--write-only' : '--rotate-secret';
+        if (opts.writeOnly === true || opts.rotateSecrets === true) {
+          /*
+           * `secret: true`: no renderer prints this value, whether or not it
+           * came from `${env:…}`. See `FieldChange.secret`.
+           */
+          changes.push({ name, from: undefined, to: desired, route, secret: true });
+          extra.push(`${named} cannot be read back; ${flag} writes it without a comparison.`);
         } else {
           extra.push(
-            `${name} holds credentials that read back as \`${REDACTED}\`, so those are not ` +
-              'diffed and are left alone unless `--write-only` is passed; the rest is compared.',
+            `${named} is SET on the server and reads back as \`${REDACTED}\`, so this plan ` +
+              'cannot say whether the value matches the document. Pass `--rotate-secret` to ' +
+              `write it (or \`--write-only\` for every unreadable field); the rest of ${name} ` +
+              'is compared.',
           );
           if (!sameValue(s.live, s.desired)) {
             changes.push({ name, from: s.live, to: s.desired, route });
@@ -262,7 +291,18 @@ function planUpdate(
     }
   };
 
+  /*
+   * A field the route DROPS is left out of the diff entirely. It cannot read
+   * back, so diffing it makes a row that no `apply` can settle — see
+   * `droppedFields`. `unknownFieldWarnings` is what tells the author, and it
+   * now says both halves of this: the field never takes effect, and a rerun
+   * settles.
+   */
+  const dropped = droppedFields(def, row, liveRow);
   for (const [name, desired] of Object.entries(row.body)) {
+    if (dropped.has(name)) {
+      continue;
+    }
     compare(name, desired);
   }
   for (const [wire, id] of Object.entries(resolved)) {

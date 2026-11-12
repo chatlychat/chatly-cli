@@ -34,6 +34,12 @@ AUTH
   logout                      Remove the stored key
   whoami                      Which workspace this key belongs to, and its scopes
                               (a cp_ credential: scopes, expiry and guardrails)
+  whoami --for plan|apply|doctor|all
+                              Does this key hold enough to run that command?
+                              Names the exact missing scopes and exits 1, so
+                              it is a CI step. Reads your chatly.yaml when
+                              there is one, so the answer covers only the
+                              resources you actually declare
   api-keys create             Mint a key. --recipient seals it to an X25519
                               public key, so no plaintext is ever returned
                               (see SEALED DELIVERY below)
@@ -178,7 +184,23 @@ WORKSPACE AS CODE
                               --file <path>   the document (- for stdin). Default: ./chatly.json
                               --prune         also delete what the document omits
                               --write-only    also send fields that cannot be read back
+                              --rotate-secret the narrow half of --write-only: only the
+                                              credentials that live INSIDE a config object,
+                                              e.g. a channel's
+                                              identityVerification.eventsSecret. Writes the
+                                              value the document holds -- Atlas mints that
+                                              secret, so nothing here generates one
                               --exit-code     plan only: 2 = drift, 3 = will not apply
+                              3 predicts the refusals a route DECLARES: a required
+                              field left out, a wrong JSON type, a value outside an
+                              enum, a secret a URL needs, a row this CLI will not
+                              send, and a misspelt field on a route that refuses
+                              one. Two things it cannot predict, because the API
+                              document does not state them: a rule spanning two
+                              fields (a macro needs 'body' or 'actions'), and which
+                              shape a multi-shape body wants -- those routes answer
+                              'Invalid input' and only apply sees it. A misspelt
+                              field on a route that DROPS it is named, not refused.
   platform plan               The same over /v1/platform/* with a cp_ credential:
   platform apply              workspaces, users, apiKeys, botCredentials,
                               knowledgeSources and settings (business hours,
@@ -188,18 +210,42 @@ WORKSPACE AS CODE
                               everything matches the document
 
 INSTALL
+  channels verify-events-secret <channel>
+                              Does the stored Atlas events secret match the one Atlas
+                              signs with? Signs a test event locally with --secret (or
+                              $ATLAS_CHATLY_EVENTS_SECRET) and asks the receiver whether
+                              it verifies. The secret is never sent. Verifies and applies
+                              nothing. Exits 1 when it does not match
   doctor                      Health-check a DEPLOYED widget install from outside, the way
                               a browser on a customer's page sees it: the attachment-upload
                               CORS preflight, whether the upload host is a Chatly host,
                               whether every host in the published CSP answers, whether every
                               widget asset serves as JavaScript, allowedOrigins, the
-                              identity-provider key set and any retiring file host.
-                              Exits 1 if any check FAILED; warnings alone exit 0
+                              identity-provider key set and any retiring file host —
+                              plus every check the server computes: knowledge-source
+                              sync, the semantic index, business hours, webhook health.
+                              Exits 1 if any check FAILED; warnings alone exit 0.
+                              A check that could NOT be made prints SKIP and is counted
+                              apart from the ones that passed; it is never an ok
                               --channel <publicId|id>  just this web channel
                               --origin <url>   the site it is installed on: asserts the
                                                origin is allowed, and is the Origin the
                                                upload preflight carries
                               --json           every verdict as JSON
+  csp                         The widget's CSP sources for a web channel, so a build
+                              step can regenerate them on every deploy instead of
+                              hand-editing what init wrote once
+                              --format next     chatly.csp.mjs, byte-identical to
+                                                what chatly init writes (default)
+                              --format header   script-src …; connect-src … — merge
+                                                into your own, never a second header
+                              --format json     {"script-src": [...], ...}
+                              --install react   drop the inline-snippet 'sha256-…'
+                                                hashes, which a widget-react or
+                                                <chatly-widget> install does not use.
+                                                Without it they are kept, as the API
+                                                sends them
+                              --public-id <id>  which web channel (needed if several)
   init next|remix|astro|express
                               Scaffold the widget into this project for a web channel:
                               identity route, launcher or snippet, CSP sources

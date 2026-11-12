@@ -1,5 +1,370 @@
 # @chatlychat/cli — changelog
 
+## 0.11.0 — 2026-11-12
+
+A **minor**: `chatly atlas-verify` is the half of the Atlas event-receiver
+story that a customer can run, and the server grew a route beside it.
+
+- **`GET /v1/atlas-receiver/fingerprint` exists** for the comparison this CLI
+  cannot make for you (CH-28). It publishes the first eight hex characters of
+  `sha256(eventsSecret)`, so the value Chatly stored can be compared with the
+  one Atlas's dashboard shows without either side being read. `atlas-verify`
+  deliberately does not call it: that command HOLDS the secret in order to
+  sign with it, so it can compute the same eight characters locally, and a
+  request would be a round trip for a value already in the process.
+- **Atlas on your own domain now receives events at all.** A path-mounted
+  Atlas (`https://example.com/atlas`) writes its instance id nowhere, so every
+  arm of the receiver's resolver matched nothing and every delivery was
+  refused with a 401 before a secret was read — `candidates=0`, 126 times
+  running for one customer. Migration 0708 adds a last-resort candidate set.
+  Nothing in this package changed for it; `doctor` reads the server's
+  `atlas.receiver` verdict as it already did.
+
+## 0.10.10 — 2026-11-08
+
+ForgeDeck's follow-up to the fourteenth report's item 1, after the server
+half shipped as a clean 400: `plan` did not predict it, so the only way to
+find out that a macro cannot move to team scope was to run `apply`.
+
+- **`plan` now warns before a macro is moved to `scope: "team"` with no
+  team.** It has everything needed to say so: the live macro is already read
+  and `teamId` is `nullable()` on the response schema, so one with no team
+  reads back as `null`. It refuses the row rather than warning, because the
+  write really will be refused.
+- **The second door is covered too** — `teamId: null` with no `scope` on a
+  macro that is already team-scoped — mirroring the one guard the service
+  needed for both.
+- **`scope: "team"` on a macro that already HAS a team stays silent.** The
+  service writes `body.teamId ?? stored.teamId`, so that patch is legitimate,
+  and a refusal there is the false-refusal shape that cost the eighth report
+  a run on a valid file. It is the case that made this rule look create-only.
+
+  0.10.7 shipped it create-only on the argument that `POST /v1/macros` carries
+  `.refine(scope !== 'team' || teamId)` and the PATCH schema does not. That
+  read the wrong file: `macros.service.ts` enforces the pair itself, against
+  the row it reads back from the database. Whether a rule is create-only is
+  decided by what the SERVER does with an omitted field, not by which schema
+  carries the refine.
+
+## 0.10.9 — 2026-11-08
+
+ForgeDeck's fourteenth report. The CLI half is their item 4: both halves of
+it are 0.10.7's own fix being wrong at its edges, and both are the same
+mistake — a rule that knew the row was an UPDATE was applied to creates too.
+
+- **A preset `aiTools` row being CREATED is no longer told to delete what it
+  needs.** `preset` and `url` are required by the preset arm of
+  `POST /v1/ai/tools`, and every new row was getting `` `preset` is an install
+INSTRUCTION… Remove it from the document. `` Following that advice leaves an
+  invalid custom tool with no `urlTemplate` and no `parameters`. Advice that
+  is wrong is worse than silence, because somebody acts on it.
+- **A `url` change on an INSTALLED preset now says what happens to it.**
+  Excluding `url` from the comparison is still right — it reads back as
+  `urlTemplate` — but the consequence was that changing the endpoint gave
+  `= unchanged` and `plan=0` while the old endpoint went on being called,
+  with nothing saying so. The warning now states it is not applied and names
+  `urlTemplate`, which the PATCH does accept.
+- **The generic "Remove it from the document." suffix is gone.** What to do
+  about a discarded field depends on the field, so each reason carries its
+  own advice. A Chatly bot's `webhookUrl` still says to remove it or set
+  `type: "external"`, and still warns on the create — there the route really
+  does accept the field and throw it away, which is the asymmetry with the
+  preset case.
+
+Server-side in the same sweep, deployed with the API rather than this
+package: a macro patched to `scope: "team"` with no team, a brand slug
+conflict on create or rename, recreating a deleted brand's slug, and a
+customer-card `key` conflict on update ALL answered 500 — which this CLI
+reads as transient and retried three times. All four are 4xx now.
+
+## 0.10.8 — 2026-11-07
+
+**0.10.7's item-4 fix was live for one `plan` and then stopped.** A Chatly bot
+carrying `webhookUrl`, `timeoutSeconds` or `fallbackMessage` still never
+settled: the warnings showed on the first run and never again.
+
+`typeof null === 'object'`. The rule proved "this bot is external" with
+`typeof live?.['externalAgent'] === 'object'`, and `toBotView` answers
+`externalAgent: null` for a Chatly bot — so every bot that already existed was
+read as an external agent, the fields were never excluded from the comparison,
+and the row went on being written on every run. A create has no live row to
+misread, which is why the first `plan` looked right.
+
+It uses `asRecord` now, the test the rest of this package already uses, moved
+to `resource-shared.ts` so there is one copy with the reason on it.
+
+Reported by ForgeDeck. Nothing here could have caught it: `LIVE_BOT` in
+`wac-report13.spec.ts` OMITTED the key rather than carrying production's
+`null`, so 21 tests agreed with the bug — the second fixture in that one
+session to invent a shape the server does not send.
+
+## 0.10.7 — 2026-11-07
+
+ForgeDeck's thirteenth report: five plan defects, four of them one cause.
+
+Every check in `field-rules-checks.ts` reads ONE field against the route's
+declared rules for that field, and the rules these rows broke are about a
+PAIR — which no generated table can hold, because the OpenAPI document does
+not state them. They are hand-written now, in `resource-conditionals.ts`.
+
+- **A preset AI tool row now settles.** `preset` and `url` are an install
+  instruction, not columns: the route expands them into `name`,
+  `description`, `parameters` and `endpointUrl` and the read carries neither
+  field back. So `plan` showed `preset: (unset) -> …` and `url: (unset) -> …`
+  on every run and `apply` wrote on every run — for ever. Both are left out
+  of the comparison on an update (and still SENT on the create that needs
+  them), with a line saying so.
+- **And a preset row keyed as anything but the preset's tool name is
+  refused.** The preset arm ignores `name`, so a row keyed `fd_t5` with
+  `preset: order_lookup` created a tool called `order_lookup`, `fd_t5` never
+  appeared on the server, and the next `apply` hit the duplicate-name
+  failure below.
+- **An update row is checked against the UPDATE route's rules.** `rulesFor`
+  returned the POST route's for both, and on `POST /v1/bots` — a union body
+  — `systemPrompt`'s `minLength` lives inside the arms, not the merged
+  table. A bot update to `systemPrompt: "short"` planned clean and `apply`
+  answered `String must contain at least 20 character(s)`. The generated
+  table had `'PATCH /v1/bots/{}': systemPrompt: { min: 20, max: 20000 }` the
+  whole time and nothing read it. Resolved PER FIELD, because an update
+  row's fields do not all go to one route.
+- **A Chatly bot carrying `webhookUrl` now settles.** It is an external
+  agent's delivery config: the chatly arm of `POST /v1/bots` discards it and
+  the read emits no `externalAgent`, so the row never closed. Warned and
+  left out of the comparison, along with `timeoutSeconds` and
+  `fallbackMessage`. An external bot is unaffected — proven by `type` and,
+  independently, by `externalAgent` on the read, because the failure
+  directions are not symmetric.
+- **Two conditional requirements are predicted:** a macro with
+  `scope: "team"` and no `teamId`, and a `referral_answers` install with no
+  `signingSecret`. Both are create-only, because both PATCH schemas
+  deliberately omit the refine.
+- **One warning for one mistake.** `name: ""` on a macro printed two lines —
+  required-and-empty, then must-hold-at-least-1-character. The required one
+  names the fix, so the length rule yields to it.
+- Server-side, in the same sweep: `POST /v1/ai/tools` answered **500** for a
+  tool name that already exists, which this CLI read as transient and
+  retried three times. It is a **409** naming `name` now, on create and on a
+  rename. Deployed with the API, not with this package.
+
+## 0.10.6 — 2026-11-07
+
+0.10.5 is **deprecated and uninstallable** — do not use it. Its published
+`package.json` carried `"@chatlychat/sdk-node": "workspace:*"`, which npm
+cannot resolve, so `npm install @chatlychat/cli@0.10.5` fails with
+`EUNSUPPORTEDPROTOCOL`. The cause was publishing with `npm publish` instead of
+`node scripts/publish-packages.mjs --apply`: `pnpm publish` rewrites the
+workspace protocol to the real version and `npm publish` does not. Same
+content, same fixes, installable.
+
+## 0.10.5 — 2026-11-07
+
+- **A union arm's ITEM enum is carried and checked.** The merged `itemEnums`
+  map records a field only where every arm declares it, so an array one arm
+  closes to a set and another leaves open merged to nothing at all and a bad
+  member matched that arm. No route in today's document is in that state —
+  every arm's map is empty — so this changes no plan output yet; it exists so
+  the check lands before the route does rather than after.
+- Server-side, in the same sweep: `POST /v1/bot-evals` and
+  `POST /v1/bot-evals/{id}/runs` answered **500** for an API key with no
+  machine user, the same defect as `POST /v1/macros` in 0.10.4 and the same
+  cause. Both create with no author now. Deployed with the API, not with this
+  package.
+
+## 0.10.4 — 2026-11-07
+
+ForgeDeck's twelfth report: four field-rule and plan defects.
+
+- **A union arm the row FILLS but its own value rules out counted as matched**,
+  so the whole warning went silent. `bots` with `type: 'external'` and a
+  chatly-shaped body planned clean and `apply` answered `webhookUrl: Required;
+type: Invalid literal value, expected "chatly"`. An arm now matches only when
+  nothing is outstanding, enum misses included; the "wrong arm" narrowing is
+  limited to single-value enums (a discriminator) so a bad `preset` still shows
+  the preset arm.
+- **`minLength`, `maxLength` and `pattern` are read out of the document**, per
+  field and per arm. `systemPrompt: 'Be nice'` (the route wants 20+) and a tool
+  named `fd-tool2` (the arm's pattern allows `_` and `.`) both planned clean
+  before this.
+- **A reference to a type the document does not declare resolves against the
+  server.** A `botRoutes`-only file blocked every row with "names bots/x, which
+  is neither on the server nor created by this plan" while the bot was right
+  there. One extra GET per referenced type, only when the document does not
+  declare it.
+- Server-side, in the same report: `POST /v1/macros` answered **500** for an API
+  key with no machine user and the CLI retried it three times. It now creates
+  the macro with no author, or answers a 4xx naming the way out for
+  `scope: "personal"`. Deployed with the API, not with this package.
+
+## 0.10.3 — 2026-11-07
+
+ForgeDeck's eleventh report: one P2 and two P3s, all closed. Their four items
+from 0.10.2 stay closed.
+
+- **A row that matches NO shape of a union route is caught in `plan`.**
+  `bots: [{ slug, name }]` planned clean and exited 2; `apply` then answered
+  "this route accepts 2 shapes and the body matched none of them". The field
+  rules read ACROSS the arms of a `oneOf` body — `allowed` is their union,
+  `required` their intersection, and a type is kept only where every arm
+  agrees — and not one of those readings can express the rule the server
+  enforces: a body has to satisfy one WHOLE arm. `POST /v1/bots` reduced to
+  `required: ['name']`, the single field both shapes share.
+
+  The generated table now records each arm on its own, and `plan` asks the
+  server's question. Where the row's own values pick an arm out — `type:
+'external'` leaves exactly one standing — only that arm's missing field is
+  named; where nothing discriminates, every shape is described.
+
+  This also closes `POST /v1/ai/tools`, which is the same defect with **no
+  discriminator at all** and would have survived a `type`-based fix: its
+  failure is a per-arm TYPE error, because `parameters` is an array in one arm
+  and undeclared in the other, so the merged table had no type for it and an
+  object passed.
+
+- **`Quote it.` is no longer advised for a field with a closed set of values.**
+  `scope: 5` on a macro wants a string and has a number, so the advice fired —
+  and `"5"` is refused too, by the enum, so following it produced a second
+  plan that failed for a different reason. The allowed values are printed in
+  its place. `name: 5`, where any string is accepted, still says `Quote it.`
+
+- **`is not one the values` reads `is not one of the values`.** The plural form
+  was already right.
+
+## 0.10.2 — 2026-11-07
+
+ForgeDeck's tenth report: four P2s, all closed. Their nine earlier items stay
+closed and good documents on every resource plan and settle without a false
+alarm.
+
+- **A bad value INSIDE an array is caught.** A webhook document with
+  `eventTypes: ["conversation.nope"]` planned clean, exited 2, and `apply`
+  answered `eventTypes.0: Invalid enum value`. The enum check compared a
+  field's own value, and an array is never one of the members — so the
+  generated table now records an array's ITEM enum separately, and every bad
+  item is named with its index, the way the server names it.
+- **`Quote it.` only where quoting is the fix.** It was appended whenever the
+  message contained `a number` or `a boolean`, and that message names both
+  the type the document has AND the type the route wants — so it fired on
+  three documents where quoting is the mistake: `enabled: "yes"` (already
+  quoted; the quoting is the bug), `ttlSeconds: 1.5` (`"1.5"` is refused too)
+  and `eventTypes: 5`. The advice now comes from the types, and a fraction
+  where a whole number belongs is told to round rather than quote.
+- **One warning per privacy mistake.** The generic table check started
+  running on every resource while `privacyPartners` kept its own, so each
+  line printed twice. The resource's copy is the one kept, because it is
+  worded by whether the row is SENT — on an unchanged pair it says the value
+  is not sent on this run, where the generic one would claim a refusal that
+  never happens.
+- **A blocked row's reason prints once during `apply`.** `apply` writes the
+  whole plan before it writes a row, so a blocked row's detail was already on
+  screen directly above. A row skipped because a DEPENDENCY failed still
+  prints its detail — that one is new information no plan could have had.
+
+## 0.10.1 — 2026-11-06
+
+**0.10.0 is uninstallable — use this.** Its published manifest carries
+`"@chatlychat/sdk-node": "workspace:*"`, so every `npm install
+@chatlychat/cli@0.10.0` fails with `EUNSUPPORTEDPROTOCOL`, including the one
+in the package's own README. No code difference: 0.10.1 is 0.10.0 published
+through `scripts/publish-packages.mjs`, which packs with pnpm so the
+workspace range is rewritten to a real version.
+
+`npm publish` run by hand does not do that rewrite and exits 0, and `npm view`
+then shows a healthy package. The repo had a gate for exactly this and it read
+`packages/*` only, so the one publishable thing in `apps/` was outside its
+scope; it covers both directories now.
+
+## 0.10.0 — 2026-11-06
+
+ForgeDeck's ninth report: 1 P1 and 5 P2s. `plan` now predicts what the route
+will refuse for every resource, and two of these were overclaims in 0.9.9's
+own help text and changelog.
+
+- **A valid `botRoutes` document no longer exits 3 as REFUSED.** (P1) The
+  route requires `botId`; the document writes `bot: '<slug>'` and the CLI
+  resolves it at send time, so the requirement was met and the check looked in
+  the wrong place. A pipeline gating on 3 stopped on a good file. The warning
+  also told the author to set `botId` — the environment-pinned uuid the
+  reference exists to keep out of the document — and now names `bot`.
+- **Wrong JSON types and bad enum values are caught on all twelve
+  resources.** 0.9.9's help text claimed this and only `privacyPartners` had
+  it. The generated table carries each field's declared type and enum now. A
+  whole number is reported as a `number`, never an `integer`, because that is
+  the vocabulary the author wrote in and what the server's own message says.
+  A field whose shape varies between union arms gets no type at all, rather
+  than a guess that would refuse a good document.
+- **An unknown field no longer makes `apply` write for ever.** A macro
+  carrying a misspelt field applied, then the read-back said the row still
+  differed, `apply` exited 1, and every later run wrote again. A dropped field
+  can never read back, so it is out of the diff; the warning says the field
+  never takes effect and that a rerun settles.
+- **A strict route's unknown field is a refusal, not advice.** `POST
+/v1/customer-cards` refuses the whole body, and the CLI called the field
+  "silently DROPPED". The OpenAPI document could not express the difference
+  until today — see the API note below.
+- **One warning per misspelt field**, not two. The live-row heuristic now runs
+  only where the route's own rules are unknown; it also asserted that "zod
+  STRIPS an unknown key", which is false for 175 schemas in this API.
+- **`--exit-code` answers 3 for a row that cannot be applied.** `--help` says
+  `3 = will not apply`; a blocked row is one the CLI will not send, and it
+  answered 2 — the code a good change exits. `--json` carries a separate
+  `blocked` list; those keys are deliberately NOT merged into `refused`,
+  because two count sites rely on a row never being in both.
+- **`chatly platform plan --exit-code` gained its 3 arm**, which it never had
+  for either a refused or a blocked row while `--help` documented it.
+- **The `completionSecret: null` warning is worded by whether the row is
+  sent** — the third warning in that file to need it.
+- **The dead `chatly docs <type>` pointer is gone**, replaced by the list of
+  fields the route accepts.
+
+Needs the API change shipped in the same release: the OpenAPI document now
+states whether a route refuses an undeclared key, which also means every union
+body names the fields each of its shapes wanted instead of answering `Invalid
+input`.
+
+## 0.9.9 — 2026-11-06
+
+- **`--exit-code` now says what 3 predicts and what it cannot.** 0.9.8 made
+  `plan` check required, wrong-type and unknown fields for all twelve resource
+  types, which closes most of the gap — but a rule spanning two fields is not
+  something a route DECLARES, so `plan` cannot derive it. A macro needing
+  'body' or 'actions' is the live example: only `apply` catches that one.
+  ForgeDeck's eighth report asked for the check or the documented limit,
+  because "a pipeline gating on exit 3 needs to know which of these it's
+  getting"; this is the half of that answer the generated table cannot give.
+  Also states that a misspelt field is NAMED but is not a refusal, since the
+  server drops it and the write succeeds.
+
+## 0.9.8 — 2026-11-06
+
+ForgeDeck's eighth report. `plan` now answers for every resource, not just
+`privacyPartners`.
+
+- **Required fields are checked on all twelve resource types.** A macro with
+  no `scope` planned as a clean `create` and exited 2, then `apply` answered
+  `scope: Required`. One resource of twelve declared its required fields. The
+  lists are no longer hand-written: `scripts/gen-wac-field-rules.mjs` derives
+  them from the served OpenAPI document, which is what the routes are built
+  from. Only on rows `plan` would CREATE — a PATCH body is partial, so an
+  absent field there means "leave as stored".
+- **A field name the route does not have is named.** A macro written with
+  `content` instead of `body` applied "successfully" with the text silently
+  dropped, because a non-strict zod object strips unknown keys. `plan` now
+  says the field is not on the resource and will be DROPPED rather than
+  refused — and does not count it as a refusal, because the write succeeds.
+- **`Run chatly apply to make N change(s)` no longer counts refused rows.** A
+  mixed document said `2 change(s)` directly above `1 document(s) will be
+REFUSED`.
+- **The wrong-type warning is worded by whether the row is sent.** It said
+  "the write will be refused" on an unchanged row, which is the mismatch 0.9.7
+  fixed for the stray-secret message one branch below it.
+- **A `completionSecret: null` beside a `completionsUrl` is flagged.** The
+  route resolves an explicit `null` over a stored secret and then refuses the
+  pair, so this is refused even when a secret is already stored.
+- **`apply` no longer mentions rows that were written when none were.** 0.9.7
+  replaced a false all-clear with "the rows that were written match the
+  document"; on a run where every row fails, that was itself a claim about
+  rows that do not exist.
+
 ## 0.9.7 — 2026-11-06
 
 ForgeDeck's seventh report. Both items are `plan` and `apply` describing what

@@ -107,6 +107,15 @@ const LIVE_ROW = (): Row => ({
   config: { displayName: 'Acme', identityVerification: { secret: 'live-secret' } },
 });
 
+// Module scope, not inside the first `describe`: the second one
+// ('a failed write is not reported as verified') uses both, and a helper
+// defined inside a sibling describe is invisible to it — 9 x TS2304 and
+// 5 failing tests, which is what this file shipped with. They close over
+// nothing block-local; `run`, `server`, `Row` and `Seen` are all module scope.
+const go = (args: string[], rows: Row[], seen: Seen[] = [], o = {}) =>
+  run([...args, '--key', 'ck_t'], server(rows, seen, o));
+const writes = (seen: Seen[]) => seen.filter((s) => s.method !== 'GET');
+
 describe('channels in a workspace document', () => {
   let out: string[];
   let dir: string;
@@ -139,9 +148,6 @@ describe('channels in a workspace document', () => {
     name: 'Site',
     config: { displayName: 'Acme', identityVerification: { secret: '${env:IDV_SECRET}' } },
   };
-  const go = (args: string[], rows: Row[], seen: Seen[] = [], o = {}) =>
-    run([...args, '--key', 'ck_t'], server(rows, seen, o));
-  const writes = (seen: Seen[]) => seen.filter((s) => s.method !== 'GET');
 
   it('creates when absent, sends no publicId, prints the minted one, and reads back clean', async () => {
     const rows: Row[] = [];
@@ -269,6 +275,13 @@ describe('a failed write is not reported as verified', () => {
   beforeEach(() => {
     out = [];
     dir = mkdtempSync(join(tmpdir(), 'chatly-wac-fail-'));
+    // Three cases here resolve `${env:IDV_SECRET}`, and the block that
+    // exports it is the SIBLING describe — so without this they failed on a
+    // refusal about an unset variable, which is correct behaviour for a
+    // document nobody exported the variable for and says nothing about the
+    // secret handling they exist to test. Same scope mistake as `go` and
+    // `writes`, in the setup rather than the helpers.
+    process.env['IDV_SECRET'] = 'doc-secret';
     vi.spyOn(process.stdout, 'write').mockImplementation((c) => {
       out.push(String(c));
       return true;
@@ -278,7 +291,10 @@ describe('a failed write is not reported as verified', () => {
       return true;
     });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env['IDV_SECRET'];
+  });
 
   const secretDoc = (): string => {
     const p = join(dir, 'chatly.json');
@@ -301,7 +317,15 @@ describe('a failed write is not reported as verified', () => {
     return p;
   };
 
-  it('says the failed row is not confirmed, instead of everything matching', async () => {
+  /*
+   * The seventh report's fix, corrected by the eighth. This run's ONLY row
+   * fails, so nothing is written — and the sentence added in round seven,
+   * "the rows that were written match the document", was then itself a claim
+   * about rows that do not exist (eighth report, item 1). Three outcomes, not
+   * two: everything matched, some rows written and some failed, or nothing
+   * written at all.
+   */
+  it('says nothing was written when every row failed', async () => {
     const seen: Seen[] = [];
     const code = await run(
       ['apply', '--file', secretDoc(), '--write-only', '--key', 'ck_t'],
@@ -310,9 +334,11 @@ describe('a failed write is not reported as verified', () => {
     const text = out.join('');
     expect(code).toBe(1);
     expect(text).toContain('nothing was written for these');
-    // The defect: both sentences in one output.
     expect(text).not.toContain('Read back: everything matches');
-    expect(text).toContain('NOT confirmed');
+    // Neither of the two wrong sentences: not the all-clear, and not a claim
+    // about written rows on a run that wrote none.
+    expect(text).not.toContain('the rows that were written');
+    expect(text).toContain('nothing was written, so there is nothing to confirm');
   });
 
   it('still says everything matches when nothing failed', async () => {
@@ -336,5 +362,126 @@ describe('a failed write is not reported as verified', () => {
     // so `verified` is the only thing a script could have gone on.
     expect(parsed.mismatches).toEqual([]);
     expect(parsed.verified).toBe(false);
+  });
+  /* ══ The Atlas events secret: write-only, named, and rotatable (CH-26) ═══
+   *
+   * FormFlow's report: `chatly.yaml` "cannot declare
+   * identityVerification.eventsSecret, even as a reference to an env value",
+   * and `plan` "shows unchanged whatever the secret is". The first half was
+   * true only of the form they wrote (`${NAME}` rather than `${env:NAME}`,
+   * which was stored LITERALLY); the second was true and is what these pin.
+   *
+   * CONTROL for each is in its comment.
+   */
+  const eventsDoc = (value: string): string => {
+    const p = join(dir, 'chatly.json');
+    writeFileSync(
+      p,
+      JSON.stringify({
+        version: 1,
+        resources: {
+          channels: [
+            {
+              key: 'site',
+              type: 'web',
+              name: 'Site',
+              config: { identityVerification: { eventsSecret: value } },
+            },
+          ],
+        },
+      }),
+    );
+    return p;
+  };
+  const EVENTS_ROW = (): Row => ({
+    ...LIVE_ROW(),
+    config: { displayName: 'Acme', identityVerification: { eventsSecret: 'whatever-is-stored' } },
+  });
+
+  /*
+   * CONTROL: reverting `plan-row.ts` to the old wording ("config holds
+   * redacted credentials") fails this on the leaf name — which is the whole
+   * of the reported defect: the operator could not tell whether the field
+   * they had just written was the one being skipped, or set at all.
+   */
+  it('plan NAMES the write-only leaf and says it is set, instead of just "unchanged"', async () => {
+    const seen: Seen[] = [];
+    expect(await go(['plan', '--file', eventsDoc('${env:IDV_SECRET}')], [EVENTS_ROW()], seen)).toBe(
+      0,
+    );
+    const printed = out.join('');
+    expect(printed).toContain('identityVerification.eventsSecret is SET on the server');
+    expect(printed).toContain('--rotate-secret');
+    // Still not diffed, so still no write. That part was always right.
+    expect(writes(seen)).toEqual([]);
+  });
+
+  /*
+   * CONTROL: dropping the `opts.rotateSecrets` arm from `plan-row.ts` makes
+   * this fail with no PATCH at all — the rotation silently doing nothing,
+   * which is worse than refusing.
+   */
+  it('--rotate-secret writes the secret the document holds', async () => {
+    const rows = [EVENTS_ROW()];
+    const seen: Seen[] = [];
+    expect(
+      await go(['apply', '--rotate-secret', '--file', eventsDoc('${env:IDV_SECRET}')], rows, seen),
+    ).toBe(0);
+    expect(writes(seen)).toHaveLength(1);
+    expect(writes(seen)[0]?.body).toEqual({
+      config: { identityVerification: { eventsSecret: 'doc-secret' } },
+    });
+    expect(rows[0]?.config).toMatchObject({
+      identityVerification: { eventsSecret: 'doc-secret' },
+    });
+  });
+
+  /*
+   * A plan artifact must not hold the credential (CH-26), whether or not it
+   * came from the environment.
+   *
+   * CONTROL: dropping `secret: true` from the change in `plan-row.ts` leaves
+   * the `${env:…}` case passing — `fromEnv` masks it — and fails the INLINE
+   * case below, which is the half nothing covered: an author who pasted the
+   * secret into the file got no masking at all.
+   */
+  it('never prints the secret, inline or from the environment', async () => {
+    for (const value of ['${env:IDV_SECRET}', 'pasted-into-the-file']) {
+      out.length = 0;
+      expect(await go(['plan', '--rotate-secret', '--file', eventsDoc(value)], [EVENTS_ROW()])).toBe(
+        0,
+      );
+      expect(out.join('')).not.toContain('doc-secret');
+      expect(out.join('')).not.toContain('pasted-into-the-file');
+      expect(out.join('')).toContain('write-only secret, not shown');
+    }
+  });
+
+  it('never writes the secret into --json either', async () => {
+    expect(
+      await go(['plan', '--rotate-secret', '--json', '--file', eventsDoc('pasted-into-the-file')], [
+        EVENTS_ROW(),
+      ]),
+    ).toBe(0);
+    expect(out.join('')).not.toContain('pasted-into-the-file');
+  });
+
+  /*
+   * The customer's first complaint, and the real cause of the 401s: written
+   * without `env:`, the literal placeholder text was STORED as the signing
+   * secret — 29 characters, past `min(16)`, redacted on read, and reported as
+   * unchanged for ever.
+   *
+   * CONTROL: deleting `MISTAKEN_ENV_REF` from `document.ts` makes this exit 0
+   * and PATCH the literal `${IDV_SECRET}` onto the channel, which is the bug.
+   */
+  it('refuses ${NAME} written without the env: prefix, rather than storing it', async () => {
+    const seen: Seen[] = [];
+    // A document problem THROWS (`main.ts` turns it into exit 1 and the
+    // message on stderr), the same shape as the two refusals above.
+    await expect(
+      go(['apply', '--file', eventsDoc('${IDV_SECRET}')], [EVENTS_ROW()], seen),
+    ).rejects.toThrow(/\$\{env:IDV_SECRET\}/);
+    expect(writes(seen)).toEqual([]);
   });
 });

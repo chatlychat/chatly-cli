@@ -34,6 +34,50 @@ export interface StorageKey {
   readonly writtenWhen: string;
 }
 
+export interface ChannelRow {
+  readonly type?: unknown;
+  readonly name?: unknown;
+  readonly publicId?: unknown;
+  readonly enabled?: unknown;
+  readonly embed?: unknown;
+}
+
+/** The web channel to scaffold for, or a sentence saying why there is none. */
+export function pickChannel(
+  rows: ReadonlyArray<ChannelRow>,
+  publicId: string | undefined,
+): { publicId: string; embed: EmbedBlock } | { error: string } {
+  const web = rows.filter((r) => r.type === 'web' && typeof r.publicId === 'string');
+  const chosen =
+    publicId === undefined
+      ? web.length === 1
+        ? web[0]
+        : undefined
+      : web.find((r) => r.publicId === publicId);
+  if (chosen === undefined) {
+    if (publicId !== undefined) {
+      return { error: `No web channel with publicId "${publicId}" in this workspace.` };
+    }
+    if (web.length === 0) {
+      return { error: 'This workspace has no web channel. Create one in the dashboard first.' };
+    }
+    return {
+      error:
+        `This workspace has ${String(web.length)} web channels; name one with --public-id:\n` +
+        web.map((r) => `  ${String(r.publicId)}  ${String(r.name ?? '')}`).join('\n'),
+    };
+  }
+  const embed = chosen.embed as EmbedBlock | null | undefined;
+  if (embed === null || embed === undefined) {
+    return {
+      error:
+        `Channel ${String(chosen.publicId)} has no embed block: this deployment has not been told ` +
+        'where its widget is served from. Nothing was written.',
+    };
+  }
+  return { publicId: String(chosen.publicId), embed };
+}
+
 export interface ScaffoldInput {
   readonly publicId: string;
   readonly embed: EmbedBlock;
@@ -41,6 +85,19 @@ export interface ScaffoldInput {
   readonly identity: 'hmac' | 'atlas';
   /** ISO date, stamped into each header so a stale file can be recognised. */
   readonly generatedOn: string;
+  /**
+   * Which install the CSP is FOR (CH-13).
+   *
+   * `snippet` (the default) keeps the `'sha256-…'` sources the API publishes
+   * for the inline embed snippet. `react` is a `@chatlychat/widget-react` or
+   * `<chatly-widget>` install, which loads the loader from a `<script src>`
+   * and runs no inline script at all — so those hashes match nothing, and a
+   * reader seeing them in `script-src` concludes they need `'unsafe-inline'`
+   * and weakens their policy for a script that does not exist. The filtering
+   * is `chatly csp`'s; this only changes what the generated comment says, so
+   * the file does not tell a React integrator to find a nonce.
+   */
+  readonly install?: 'snippet' | 'react';
 }
 
 /**
@@ -71,8 +128,11 @@ export function cspModule(input: ScaffoldInput): ScaffoldFile {
  * Content-Security-Policy header. Two headers intersect, so a second one
  * would block your own scripts rather than allow Chatly's.
  *
- * The embed snippet is an inline <script>: your script-src needs a nonce or
- * hash for it, or load the widget with @chatlychat/widget-react instead.
+ * ${
+    input.install === 'react'
+      ? `This list is for a @chatlychat/widget-react or <chatly-widget> install:\n * the inline-snippet hashes are NOT in it, because that install runs no\n * inline script. You do not need a nonce and you do not need\n * 'unsafe-inline'. If you switch to the embed snippet, regenerate without\n * --install react.`
+      : `The embed snippet is an inline <script>: your script-src needs a nonce or\n * hash for it, or load the widget with @chatlychat/widget-react instead and\n * regenerate with \`chatly csp --install react\`.`
+  }
  */
 export const chatlyCsp = {
   'script-src': ${list(csp.scriptSrc)},

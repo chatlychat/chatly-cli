@@ -76,6 +76,44 @@ export interface ResourceDef {
   readonly keylessHint?: string;
   /** The server's own normalisation, applied to both sides before matching. */
   readonly normalizeKey?: (key: string) => string;
+  /**
+   * ONE row per workspace, no id, no create, no delete (CH-24).
+   *
+   * The section in the document is an OBJECT, not an array, and the author
+   * writes no natural key: `parseSection` stamps `SINGLETON_KEY` on, and
+   * `rowsFrom` stamps the same value onto the live answer. Everything
+   * downstream then works on a row set of one, unchanged.
+   *
+   * The alternative was making the author write `"key": "default"` into
+   * every file, which is a magic string with no meaning to the person typing
+   * it and one more thing to get wrong in a document that is already the
+   * thing standing between them and production.
+   */
+  readonly singleton?: boolean;
+  /**
+   * The API-key scopes this resource's LIST route and its WRITE routes
+   * require (CH-17).
+   *
+   * Beside the routes they gate, not in a table of their own, because that is
+   * the only placement a new resource cannot forget: a def has to say both or
+   * `wac/scopes.spec.ts` fails. A separate `command -> scopes` table is the
+   * thing FormFlow is actually complaining about — "nothing says whether the
+   * eight scopes our CI key holds are minimal or complete" — and a
+   * hand-maintained answer to that goes stale the first time a route moves.
+   *
+   * Read off the handlers in `apps/api/src/modules/**`, never off the route's
+   * name, which is the rule the rest of this table is built on. Several do
+   * not match what you would guess: `GET /v1/bots` requires
+   * `triggers:read` and its writes require `ai:configure`; a documentation
+   * source reads on `kb:read` and writes on `kb:write:sources`; brands,
+   * email templates and business hours all sit on plain `workspace:*`.
+   *
+   * Optional ONLY because the Platform API's resources speak a different
+   * scope vocabulary (`platform:*`, on a `cp_` credential) and `chatly
+   * whoami --for` does not answer for them.
+   */
+  readonly readScope?: string;
+  readonly writeScope?: string;
   readonly list: { readonly path: string; readonly paged: boolean };
   /**
    * Which rows of the list route actually EXIST.
@@ -138,6 +176,25 @@ export interface ResourceDef {
    */
   readonly secrets: ReadonlyArray<string>;
   /**
+   * Fields THIS ROW supplies that the route accepts and throws away, because
+   * of another field's value — field name to the reason, which `plan` prints.
+   *
+   * `droppedFields` already answers the unconditional case from the route's
+   * own allowed set. This is the conditional one, which no generated table
+   * can hold: `webhookUrl` is a real field on `POST /v1/bots` and is kept
+   * only for `type: "external"`, and `preset`/`url` on an AI tool are an
+   * install instruction that expands into other columns. Both read back as
+   * absent, so diffing one makes a row no `apply` can settle and that writes
+   * to production on every run (ForgeDeck 2026-11-07 items 2 and 4).
+   *
+   * `live` is the matched server row, or `undefined` on a create. The rules
+   * live in `resource-conditionals.ts`.
+   */
+  readonly discards?: (
+    body: Readonly<Record<string, unknown>>,
+    live: Readonly<Record<string, unknown>> | undefined,
+  ) => Readonly<Record<string, string>>;
+  /**
    * Returned on a read and accepted by NO write path. A document declaring
    * one is refused at parse time: zod would strip it and answer 200, and the
    * author would never find out.
@@ -189,6 +246,20 @@ export interface ResourceDef {
    * was false (the service keeps what the caller omitted).
    */
   readonly fullReplaceNote?: string;
+  /**
+   * Fields whose wrong-type warning this resource issues ITSELF, so the
+   * generic one must not also fire.
+   *
+   * `privacyPartners` printed each one twice (ForgeDeck 2026-11-06 item 3,
+   * reproduced twice): the generic check began running on every resource
+   * while `resources-privacy.ts` kept its own. The resource's copy is the one
+   * kept, because it is worded by whether the row is SENT — on an unchanged
+   * live pair it says "nothing is sent on this run" where the generic one
+   * would claim a refusal that never happens, and that distinction is itself
+   * a fix from the report before this one.
+   */
+  readonly ownTypeChecks?: ReadonlyArray<string>;
+
   readonly extraWarnings?: (
     rows: ReadonlyArray<{ key: string; body: Record<string, unknown> }>,
     liveRows: ReadonlyArray<Record<string, unknown>>,
@@ -208,6 +279,28 @@ export interface ResourceDef {
      */
     willSend: (key: string) => boolean,
   ) => ReadonlyArray<string>;
+  /**
+   * The live row is itself in a BAD STATE — not different from the document,
+   * broken (CH-05).
+   *
+   * Every other thing in this file answers "does the server match the file".
+   * This answers "is the thing the file describes working", and the two are
+   * independent: FormFlow's `chatly plan` printed `0 to create, 0 to change,
+   * 4 unchanged` and exited 0 while two of three knowledge sources had failed
+   * their last sync. Every field the document declares DID match; nobody had
+   * looked at `syncStatus`.
+   *
+   * `note` goes on the plan line. `failed` makes `plan` exit 3 and stops
+   * `apply`'s read-back saying "everything matches the document" — because it
+   * does match, and the thing is still broken, and printing only the first
+   * half is how a deploy gate goes green over a dead knowledge base.
+   *
+   * It must only OBSERVE: it is called on a row `plan` has already read, and
+   * it never changes what is written.
+   */
+  readonly liveState?: (
+    live: Readonly<Record<string, unknown>>,
+  ) => { readonly note: string; readonly failed: boolean } | undefined;
   /** The live row, reshaped into the vocabulary the document writes. */
   readonly project?: (row: Record<string, unknown>) => Record<string, unknown>;
   /** Document-only keys naming another resource by ITS natural key. */

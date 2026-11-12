@@ -24,9 +24,10 @@ import { describe, expect, it } from 'vitest';
 
 import { bound, unbound, URL_OK } from './__tests__/privacy-fixtures.js';
 import { def, doc, live } from './__tests__/wac-fixtures.js';
-import { requiredFieldWarnings, sectionWarnings } from './diff-warnings.js';
+import { sectionWarnings } from './diff-warnings.js';
 import { buildPlan } from './diff.js';
 import { parseDocument } from './document.js';
+import { requiredFieldWarnings } from './field-rules-checks.js';
 
 /** A registry row for a provider nobody has opted into, carrying the host rule. */
 const rowsFor = (body: Record<string, unknown>) =>
@@ -39,9 +40,19 @@ function warnings(body: Record<string, unknown>, suffixes?: readonly string[]): 
   return [...plan.warnings];
 }
 
+/*
+ * These cases are all FIRST CREATES, which is the only action the rule fires
+ * on. It gained that argument in the eighth report: its docblock had always
+ * promised create-only and the function took no action at all.
+ */
+const reqWarn = (
+  d: Parameters<typeof requiredFieldWarnings>[0],
+  r: Parameters<typeof requiredFieldWarnings>[1],
+): ReadonlyArray<string> => requiredFieldWarnings(d, r, () => 'create');
+
 describe('a required field the document omits', () => {
   it('warns when `cbid` is absent, naming it and saying the write is refused', () => {
-    const [w, ...rest] = requiredFieldWarnings(
+    const [w, ...rest] = reqWarn(
       def('privacyPartners'),
       rowsFor({
         provider: 'cookiemunch',
@@ -57,7 +68,7 @@ describe('a required field the document omits', () => {
    * `""` is present and fails the route's `min(1)`.
    */
   it('warns on an EMPTY cbid, which a presence check would pass', () => {
-    const [w, ...rest] = requiredFieldWarnings(
+    const [w, ...rest] = reqWarn(
       def('privacyPartners'),
       rowsFor({
         provider: 'cookiemunch',
@@ -70,29 +81,60 @@ describe('a required field the document omits', () => {
 
   it('warns on whitespace, which the route trims to empty', () => {
     expect(
-      requiredFieldWarnings(
-        def('privacyPartners'),
-        rowsFor({ provider: 'cookiemunch', cbid: '  ' }),
-      ),
+      reqWarn(def('privacyPartners'), rowsFor({ provider: 'cookiemunch', cbid: '  ' })),
     ).toHaveLength(1);
   });
 
   it('is silent on a document that carries it', () => {
     expect(
-      requiredFieldWarnings(
-        def('privacyPartners'),
-        rowsFor({ provider: 'cookiemunch', cbid: 'cb_live_1' }),
-      ),
+      reqWarn(def('privacyPartners'), rowsFor({ provider: 'cookiemunch', cbid: 'cb_live_1' })),
     ).toEqual([]);
   });
 
   /*
-   * A resource that declares no `requiredFields` must be unaffected. Without
-   * this the feature could be shipped as "warn on every empty field anywhere",
-   * which would fire on every optional field in every other document.
+   * The concern this test was written for still holds and its premise no
+   * longer does. It read "a resource that declares no `requiredFields` must be
+   * unaffected", because only `privacyPartners` declared any; since the eighth
+   * report every resource gets its route's real list out of
+   * `field-rules.generated.ts`, so `bots` — the row this used to pass — now
+   * correctly warns that `name` is missing, which is what `POST /v1/bots`
+   * refuses for.
+   *
+   * What must NOT happen is the thing the old comment named: "warn on every
+   * empty field anywhere". Two guards, both asserted here — a route that
+   * requires nothing says nothing, and an optional field left out is never
+   * mentioned.
    */
-  it('is silent for a resource that declares none', () => {
-    expect(requiredFieldWarnings(def('bots'), rowsFor({ provider: 'x' }))).toEqual([]);
+  /*
+   * `rowsFor` builds a privacyPartners document and cannot carry another
+   * resource's row — a `bots` row with no `provider` is a parse error before
+   * any rule runs. These three build the row directly instead.
+   */
+  const rowOf = (body: Record<string, unknown>) => [
+    {
+      key: String(body['key'] ?? body['name'] ?? 'x'),
+      path: 'resources.x[0]',
+      body,
+      refs: {},
+      fromEnv: [],
+    },
+  ];
+
+  it('is silent for a route that requires nothing', () => {
+    // `POST /v1/ai/tools` is a `oneOf`; a field required by one arm only is
+    // not required by the body, so the generated list is empty.
+    expect(reqWarn(def('aiTools'), rowOf({ key: 'x' }))).toEqual([]);
+  });
+
+  it('does not mention an optional field the document omits', () => {
+    expect(reqWarn(def('bots'), rowOf({ name: 'Support bot' }))).toEqual([]);
+  });
+
+  it('names the real missing field for a resource that declared none before', () => {
+    const [w, ...rest] = reqWarn(def('bots'), rowOf({ description: 'no name here' }));
+    expect(rest).toEqual([]);
+    expect(w).toContain('`name`');
+    expect(w).toContain('required');
   });
 });
 

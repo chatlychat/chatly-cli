@@ -46,10 +46,23 @@
  * cases to want a spec of its own.
  */
 
-/** `warn` never fails the run; `fail` does. See `exitCodeFor`. */
+/** `warn` and `skip` never fail the run; `fail` does. See `exitCodeFor`. */
 import { siteCspVerdict } from './doctor-csp-site.js';
+import { healthChecks, identityContractChecks } from './doctor-readiness.js';
 
-export type Verdict = 'pass' | 'fail' | 'warn';
+/**
+ * `skip` is a check that DID NOT RUN, and it is a separate word from `warn`
+ * on purpose (CH-05).
+ *
+ * A check that could not be made — the credential lacks the scope, the route
+ * is not on this deployment, the server answered `ok: null` for "not
+ * determined" — must never be counted among the ones that passed. FormFlow
+ * read `12 check(s): 12 ok` off a workspace with two dead knowledge sources,
+ * and the general shape of that defect (reporting a pass for something that
+ * never ran) is one this repo has been bitten by repeatedly. So `skip` prints
+ * as SKIP, carries the reason in `detail`, and is counted on its own line.
+ */
+export type Verdict = 'pass' | 'fail' | 'warn' | 'skip';
 
 export interface DoctorCheck {
   readonly name: string;
@@ -95,6 +108,18 @@ export interface DoctorDeps {
    * call, which is what a deploy script can make" — this is that script.
    */
   readonly health: () => Promise<readonly unknown[]>;
+  /**
+   * `GET /v1/channels/{id}/identity-contract`'s `checks` array (CH-09).
+   *
+   * Same reasoning as `health`: the derivation lives server-side in
+   * `resolveOidcIssuers`, this package is published and that one is private,
+   * so the verdict is READ rather than recomputed. The route exists to be
+   * failed on by a CI step; this is that step.
+   *
+   * Throws on a missing scope, a non-`web` channel, or a deployment without
+   * the route — all three report as SKIP, never as a pass.
+   */
+  readonly identityContract: (channelId: string) => Promise<readonly unknown[]>;
 }
 
 export interface DoctorOptions {
@@ -305,18 +330,26 @@ export async function runChecks(
   deps: DoctorDeps,
 ): Promise<DoctorCheck[]> {
   const out: DoctorCheck[] = [];
+  /*
+   * No early return here any more (CH-05).
+   *
+   * It used to answer with the one `channels` warning and stop, which meant a
+   * workspace whose key cannot see a web channel got no `kb.sync`, no
+   * `kb.semantic_index` and no `business_hours.set` either — and those are
+   * workspace-level facts with nothing to do with a widget install.
+   */
   if (channels.length === 0) {
-    return [
-      {
-        name: 'channels',
-        verdict: 'warn',
-        detail:
-          'No web channel is visible to this credential, so there is no widget install to check.',
-        fix:
-          'Create one with `chatly channels create`, or check the key has `channels:read` ' +
-          '(`chatly whoami`). `--channel <publicId>` narrows to one.',
-      },
-    ];
+    out.push({
+      name: 'channels',
+      verdict: 'warn',
+      detail:
+        'No web channel is visible to this credential, so there is no widget install to check.',
+      fix:
+        'Create one with `chatly channels create`, or check the key has `channels:read` ' +
+        '(`chatly whoami`). `--channel <publicId>` narrows to one.',
+    });
+    out.push(...(await healthChecks(deps.health)));
+    return out;
   }
 
   out.push(await uploadPreflightCheck(opts, deps));
@@ -340,6 +373,7 @@ export async function runChecks(
     }
     out.push(await widgetAssetsCheck(ch, deps));
     out.push(allowedOriginsCheck(ch, opts));
+    out.push(...(await identityContractChecks(ch, deps)));
     const deprecated = strings(ch.embed['deprecatedFileOrigins']);
     if (deprecated.length > 0) {
       out.push({
@@ -356,9 +390,12 @@ export async function runChecks(
     }
   }
 
-  if (channels.some((ch) => rec(ch.config['identityVerification'])['enabled'] === true)) {
-    out.push(await identityJwksCheck(deps));
-  }
+  /*
+   * Every verdict the SERVER already computes, always — not just the JWKS
+   * one, and not only when a channel verifies visitors (CH-05). See
+   * `healthChecks` in `doctor-readiness.ts` for what was wrong with that.
+   */
+  out.push(...(await healthChecks(deps.health)));
   return out;
 }
 
@@ -370,7 +407,9 @@ async function uploadPreflightCheck(opts: DoctorOptions, deps: DoctorDeps): Prom
   } catch (err) {
     return {
       name,
-      verdict: 'warn',
+      // SKIP, not warn: the probe was never made, so this says nothing about
+      // the bucket in either direction. See the note on `Verdict`.
+      verdict: 'skip',
       detail: `Could not get a presigned upload URL to probe: ${err instanceof Error ? err.message : String(err)}`,
       fix:
         'This check signs an upload (writing nothing) to learn the exact URL a browser would ' +
@@ -592,43 +631,5 @@ function allowedOriginsCheck(ch: ChannelView, opts: DoctorOptions): DoctorCheck 
     verdict: 'pass',
     detail: `Restricted to ${allowed.join(', ')}. Pass \`--origin <url>\` to assert a site.`,
     fix: null,
-  };
-}
-
-async function identityJwksCheck(deps: DoctorDeps): Promise<DoctorCheck> {
-  const name = 'identity.jwks';
-  let checks: readonly unknown[];
-  try {
-    checks = await deps.health();
-  } catch (err) {
-    return {
-      name,
-      verdict: 'warn',
-      detail: `Could not read GET /v1/integration-health: ${err instanceof Error ? err.message : String(err)}`,
-      fix:
-        'Identity verification is on for a channel here, and the key set it resolves to is ' +
-        'resolved server-side. That verdict needs the `workspace:read` scope.',
-    };
-  }
-  const found = checks.map(rec).find((c) => c['id'] === 'identity.jwks_reachable');
-  if (found === undefined) {
-    return {
-      name,
-      verdict: 'warn',
-      detail: 'GET /v1/integration-health did not report `identity.jwks_reachable`.',
-      fix: 'Upgrade the Chatly deployment, or read the channel’s issuer settings by hand.',
-    };
-  }
-  /*
-   * `ok: null` is a real third answer and means NOT DETERMINED — an unprobed
-   * channel, a stale probe, or a scope the credential lacks. Grading it
-   * `fail` would turn "we do not know" into "it is broken".
-   */
-  const ok = found['ok'];
-  return {
-    name,
-    verdict: ok === true ? 'pass' : ok === false ? 'fail' : 'warn',
-    detail: text(found['detail']) ?? 'No detail.',
-    fix: text(found['fix']),
   };
 }

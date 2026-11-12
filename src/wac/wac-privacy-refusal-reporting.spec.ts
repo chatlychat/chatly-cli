@@ -350,3 +350,154 @@ describe('a stray secret is described by what this run will do', () => {
     expect(plan.refused).toEqual(['cookiemunch']);
   });
 });
+
+/*
+ * ForgeDeck's EIGHTH report, 2026-11-06 item 1, reproduced twice: the
+ * wrong-type warning said "the write will be refused" on a row `apply` does
+ * not send — the same mismatch the seventh report fixed for the stray-secret
+ * message ONE BRANCH BELOW it in the same function.
+ */
+describe('the wrong-type warning is worded by whether the row is sent', () => {
+  const text = (p: ReturnType<typeof buildPlan>) => p.warnings.join('\n');
+  const live1 = () => live({ privacyPartners: [bound()] });
+
+  it('says it is not sent when the row is unchanged', () => {
+    // A credential is excluded from the diff, so a wrong-type secret beside an
+    // otherwise-matching row plans as `unchanged` and nothing is written.
+    const plan = buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [
+            {
+              provider: 'cookiemunch',
+              cbid: 'cb_live_1',
+              completionsUrl: 'https://api.cookiemunch.net/v1/stored',
+              completionSecret: 5,
+            },
+          ],
+        }),
+      ),
+      live1(),
+    );
+    expect(plan.items[0]?.action).toBe('noop');
+    const text = plan.warnings.join('\n');
+    expect(text).toContain('is not sent on this run');
+    expect(text).not.toContain('the write will be refused');
+    expect(plan.refused).toEqual([]);
+  });
+
+  it('keeps "the write will be refused" where the row is sent', () => {
+    const plan = buildPlan(
+      parseDocument(
+        doc({ privacyPartners: [{ provider: 'cookiemunch', cbid: 'x', completionsUrl: 5 }] }),
+      ),
+      live({ privacyPartners: [unbound()] }),
+    );
+    expect(text(plan)).toContain('the write will be refused');
+    expect(plan.refused).toEqual(['cookiemunch']);
+  });
+});
+
+/*
+ * ForgeDeck's eighth report item 4, reproduced twice. The route resolves
+ * `input.completionSecret === undefined ? stored : input.completionSecret`
+ * and then refuses a non-null URL with a null secret, so an EXPLICIT null is
+ * not "leave it alone" — it overrides a stored secret too.
+ */
+describe('an explicit null secret beside a URL', () => {
+  const withUrlAndNullSecret = (liveRows: Record<string, Array<Record<string, unknown>>>) =>
+    buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [
+            {
+              provider: 'cookiemunch',
+              cbid: 'x',
+              completionsUrl: URL_OK,
+              completionSecret: null,
+            },
+          ],
+        }),
+      ),
+      live(liveRows),
+    );
+
+  it('is refused on a first create, like an absent secret', () => {
+    const plan = withUrlAndNullSecret({ privacyPartners: [unbound()] });
+    expect(plan.warnings.join('\n')).toContain('nothing to sign with');
+    expect(plan.refused).toEqual(['cookiemunch']);
+  });
+
+  /* Stronger than reported: a null overrides a STORED secret at the route. */
+  it('is refused even when a secret is stored', () => {
+    const plan = withUrlAndNullSecret({ privacyPartners: [bound()] });
+    expect(plan.warnings.join('\n')).toContain('nothing to sign with');
+    expect(plan.refused).toEqual(['cookiemunch']);
+  });
+
+  it('leaves a null secret alone when there is no URL', () => {
+    const plan = buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [{ provider: 'cookiemunch', cbid: 'cb_live_1', completionSecret: null }],
+        }),
+      ),
+      live({ privacyPartners: [bound({ completionsUrl: null, completionSecretSet: false })] }),
+    );
+    expect(plan.warnings.join('\n')).not.toContain('nothing to sign with');
+  });
+});
+
+/*
+ * ForgeDeck's NINTH report, 2026-11-06 item 5 — the THIRD warning in this
+ * file to need `willSend`, reported after the other two were fixed. On an
+ * unchanged live pair it said the server refuses the row AND that no secret is
+ * stored, while one was stored and nothing was sent.
+ */
+describe('a null secret on an unchanged live pair', () => {
+  it('says nothing is sent, and does not claim none is stored', () => {
+    const plan = buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [
+            {
+              provider: 'cookiemunch',
+              cbid: 'cb_live_1',
+              completionsUrl: URL_OK,
+              completionSecret: null,
+            },
+          ],
+        }),
+      ),
+      live({ privacyPartners: [bound({ completionsUrl: URL_OK })] }),
+    );
+    expect(plan.items[0]?.action).toBe('noop');
+    const text = plan.warnings.join('\n');
+    expect(text).toContain('nothing is sent on this run');
+    expect(text).not.toContain('none is stored');
+    expect(text).not.toContain('the server refuses it');
+    expect(plan.refused).toEqual([]);
+  });
+
+  /* Sent, with a secret stored: the explicit null OVERRIDES it at the route. */
+  it('says the null overrides the stored secret when the row is sent', () => {
+    const plan = buildPlan(
+      parseDocument(
+        doc({
+          privacyPartners: [
+            {
+              provider: 'cookiemunch',
+              cbid: 'changed',
+              completionsUrl: URL_OK,
+              completionSecret: null,
+            },
+          ],
+        }),
+      ),
+      live({ privacyPartners: [bound({ completionsUrl: URL_OK })] }),
+    );
+    const text = plan.warnings.join('\n');
+    expect(text).toContain('overrides the stored one');
+    expect(plan.refused).toEqual(['cookiemunch']);
+  });
+});

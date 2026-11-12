@@ -36,8 +36,19 @@ export function show(value: unknown): string {
 }
 
 function changeLine(item: PlanItem, change: FieldChange): string {
-  const masked = item.row?.fromEnv.includes(change.name) === true;
-  const to = masked ? '(from the environment)' : show(change.to);
+  /*
+   * `change.secret` masks independently of where the value came from.
+   * `fromEnv` covers `${env:…}` and covers nothing when the author pasted the
+   * secret into the file — and a write-only credential must not be printed
+   * either way (CH-26).
+   */
+  const masked = change.secret === true || item.row?.fromEnv.includes(change.name) === true;
+  const to =
+    change.secret === true
+      ? '(write-only secret, not shown)'
+      : masked
+        ? '(from the environment)'
+        : show(change.to);
   if (item.action === 'create') {
     return `      ${change.name} = ${to}`;
   }
@@ -154,9 +165,24 @@ export function planFooter(plan: Plan, opts: RenderOptions): string {
         : 'There is nothing to apply.',
     );
   } else {
+    /*
+     * The refused rows come OUT of this count. ForgeDeck's eighth report,
+     * 2026-11-06 item 2, reproduced twice: a mixed document printed `Run
+     * chatly apply to make 2 change(s).` directly above `1 document(s) will be
+     * REFUSED`, so the one number a reader acts on contradicted the line under
+     * it. `apply` applies rows independently, so the truthful count is what
+     * the server would accept.
+     *
+     * `Math.max(0, …)` rather than a bare subtraction: a section-level refusal
+     * can name a key twice, which is why `allRefused` above tests `>=`. Zero
+     * cannot be reached through this branch anyway — `allRefused` sends that
+     * case to the other one — but a negative "change(s)" is the kind of thing
+     * that outlives the reason it was impossible.
+     */
+    const accepted = Math.max(0, counts.create + counts.update - plan.refused.length);
     lines.push(
       `Run \`chatly apply\`${opts.prune ? ' --prune' : ''} to make ` +
-        `${String(counts.create + counts.update + (opts.prune ? counts.orphan : 0))} change(s).`,
+        `${String(accepted + (opts.prune ? counts.orphan : 0))} change(s).`,
     );
   }
   if (counts.blocked > 0) {
@@ -174,6 +200,18 @@ export function planFooter(plan: Plan, opts: RenderOptions): string {
    * seven, so the plan read identically whether the change was ready or
    * doomed. `--exit-code` returns 3 for this, distinct from 2 for drift.
    */
+  /*
+   * Rows that MATCH the document and are broken anyway (CH-05). Last,
+   * because it is the line somebody has to act on after everything else in
+   * the plan reads clean — which is exactly the state FormFlow's gate was in.
+   */
+  if (plan.unhealthy.length > 0) {
+    lines.push(
+      `${String(plan.unhealthy.length)} resource(s) match this document and are FAILING on ` +
+        `the server (${plan.unhealthy.join(', ')}). Applying changes nothing about that — ` +
+        'the reason is on each line above. `plan` exits 3 for this.',
+    );
+  }
   if (plan.refused.length > 0) {
     lines.push(
       `${String(plan.refused.length)} document(s) will be REFUSED by the server as written ` +
@@ -210,9 +248,11 @@ export function planForJson(plan: Plan): unknown {
       notes: item.notes,
       dependsOn: item.dependsOn,
       changes: item.changes.map((change) =>
-        item.row?.fromEnv.includes(change.name) === true
-          ? { name: change.name, from: '(unreadable)', to: '(from the environment)' }
-          : { name: change.name, from: change.from ?? null, to: change.to },
+        change.secret === true
+          ? { name: change.name, from: '(unreadable)', to: '(write-only secret, not shown)' }
+          : item.row?.fromEnv.includes(change.name) === true
+            ? { name: change.name, from: '(unreadable)', to: '(from the environment)' }
+            : { name: change.name, from: change.from ?? null, to: change.to },
       ),
     })),
     warnings: plan.warnings,
@@ -220,5 +260,26 @@ export function planForJson(plan: Plan): unknown {
     // Top level, because the reason is prose inside `warnings` and a script
     // had only the exit code to go on (ForgeDeck's sixth report, item 3).
     refused: plan.refused,
+    /*
+     * Live rows that match the document and are broken (CH-05). Beside
+     * `refused` and `blocked` and in neither, because it answers a different
+     * question — not "will this write happen" but "does the thing work". A
+     * pipeline that reads `[]` here has checked something no other field
+     * covers.
+     */
+    unhealthy: plan.unhealthy,
+    /*
+     * Rows this CLI will NOT SEND, which is a different fact from `refused`
+     * — that one is a prediction that the server would say no to a row we do
+     * send. A pipeline usually wants the union, and the exit code gives it:
+     * either list being non-empty answers 3.
+     *
+     * Reported 2026-11-06: a row printed `CANNOT APPLY` with a good reason and
+     * `plan` exited 2, the same code a good change exits, with `refused: []`.
+     * Putting these keys INTO `refused` was the reported fix and is wrong —
+     * two count sites subtract or add the two lists on the premise that a row
+     * is never in both, so it would have mis-stated every total.
+     */
+    blocked: plan.items.filter((i) => i.action === 'blocked').map((i) => i.key),
   };
 }

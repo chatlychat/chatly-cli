@@ -13,9 +13,14 @@ describe('readinessChecks', () => {
     expect(c).toEqual({ name: 'readiness.x', verdict, detail: 'd', fix: null });
   });
 
-  it('turns a malformed body into one warning, not a crash', () => {
+  /*
+   * SKIP, not warn (CH-05). Nothing was checked, and a verdict that cannot
+   * say whether something is true must not be summarised beside the ones
+   * that passed — which is what `doctor`'s "N ok" line used to do.
+   */
+  it('turns a malformed body into one SKIPPED row, not a crash and not a warning', () => {
     const out = readinessChecks({});
     expect(out).toHaveLength(1);
-    expect(out[0]?.verdict).toBe('warn');
+    expect(out[0]?.verdict).toBe('skip');
   });
 });

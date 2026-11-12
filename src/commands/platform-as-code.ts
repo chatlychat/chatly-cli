@@ -94,6 +94,9 @@ async function planAgainstLive(
   chatly: ChatlyClient,
   doc: WacDocument,
   writeOnly: boolean,
+  // `--rotate-secret`, carried wherever `--write-only` goes so `platform`
+  // takes the same flags the help text says it does.
+  rotateSecrets: boolean,
 ): Promise<Plan> {
   const { live, warnings } = await readPlatformLive(chatly, doc);
   /*
@@ -107,7 +110,7 @@ async function planAgainstLive(
     declaresWorkspaces || workspacesDef === undefined
       ? []
       : [{ def: workspacesDef, section: live.get('workspaces') ?? { rows: [] } }];
-  const built = buildPlan(doc, live, { writeOnly, referenced });
+  const built = buildPlan(doc, live, { writeOnly, rotateSecrets, referenced });
   return { ...built, warnings: [...warnings, ...built.warnings] };
 }
 
@@ -118,7 +121,12 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
     process.stderr.write(`${guard}\n`);
     return 1;
   }
-  const built = await planAgainstLive(chatly, doc, bool(args.flags, 'write-only'));
+  const built = await planAgainstLive(
+    chatly,
+    doc,
+    bool(args.flags, 'write-only'),
+    bool(args.flags, 'rotate-secret'),
+  );
   const opts = { prune: bool(args.flags, 'prune'), pruneUnsafe: built.pruneUnsafe };
   if (bool(args.flags, 'json')) {
     printJson(planForJson(built));
@@ -126,11 +134,21 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
     process.stdout.write(renderPlan(built, opts));
     process.stdout.write(planFooter(built, opts));
   }
-  // `--exit-code` means what it means on `chatly plan`: 2 for drift, so CI
-  // can tell "the platform no longer matches the repo" from "the call failed".
+  /*
+   * `--exit-code` means what it means on `chatly plan`: 2 for drift, so CI can
+   * tell "the platform no longer matches the repo" from "the call failed", and
+   * 3 for "this file will not apply at all".
+   *
+   * It had NO 3 arm — not for a refused row and not for a blocked one — while
+   * `chatly plan` has had one since 0.9.6 and `--help` documents it for both
+   * commands. A platform pipeline gating on 3 could never fire.
+   */
   if (bool(args.flags, 'exit-code')) {
     const counts = tally(built);
-    return counts.create + counts.update + counts.blocked > 0 ? 2 : 0;
+    if (built.refused.length > 0 || counts.blocked > 0) {
+      return 3;
+    }
+    return counts.create + counts.update > 0 ? 2 : 0;
   }
   return built.items.some((i) => i.action === 'blocked') ? 1 : 0;
 }
@@ -158,8 +176,9 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
     return 1;
   }
   const writeOnly = bool(args.flags, 'write-only');
+  const rotateSecrets = bool(args.flags, 'rotate-secret');
   const json = bool(args.flags, 'json');
-  const built = await planAgainstLive(chatly, doc, writeOnly);
+  const built = await planAgainstLive(chatly, doc, writeOnly, rotateSecrets);
   const opts: ApplyOptions = {
     prune: bool(args.flags, 'prune'),
     pruneUnsafe: built.pruneUnsafe,
@@ -173,7 +192,7 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
   const outcomes = await execute(chatly, built, opts, platformResourceDef);
 
   /* Read-back verification: re-read, re-plan, and require every row to match. */
-  const after = await planAgainstLive(chatly, doc, writeOnly);
+  const after = await planAgainstLive(chatly, doc, writeOnly, rotateSecrets);
   const mismatches = unverified(after, opts.prune);
 
   /*
@@ -190,6 +209,13 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
    * the form that gets acted on automatically.
    */
   const failed = outcomes.some((o) => o.state === 'failed' || o.state === 'skipped');
+  /*
+   * ForgeDeck's eighth report item 1: "the rows that were written match the
+   * document" was printed on a run where NO row was written — every row
+   * failed. The sentence was written for the mixed case and is the only one
+   * that fires once `failed` is true.
+   */
+  const wrote = outcomes.some((o) => o.state === 'applied');
   if (json) {
     printJson({
       outcomes,
@@ -203,10 +229,13 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
       mismatches.length > 0
         ? `\nRead back: ${String(mismatches.length)} item(s) still differ from the document:\n` +
             mismatches.map((m) => `  ${m}\n`).join('')
-        : failed
-          ? '\nRead back: the rows that were written match the document. The failed row(s) ' +
-            'above are NOT confirmed — a write-only value cannot be read back.\n'
-          : '\nRead back: everything matches the document.\n',
+        : !failed
+          ? '\nRead back: everything matches the document.\n'
+          : wrote
+            ? '\nRead back: the rows that were written match the document. The failed row(s) ' +
+              'above are NOT confirmed — a write-only value cannot be read back.\n'
+            : '\nRead back: nothing was written, so there is nothing to confirm. The failed ' +
+              'row(s) above are listed with their reasons.\n',
     );
   }
   return failed || mismatches.length > 0 ? 1 : 0;

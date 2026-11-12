@@ -23,7 +23,7 @@ export async function login(args: ParsedArgs): Promise<number> {
   if (key === undefined) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     process.stdout.write(
-      'Paste a workspace API key (Settings → API keys). It will be visible as you type;\n' +
+      'Paste a workspace API key (Workspace → Integrations → Developer → API keys). It will be visible as you type;\n' +
         'use `chatly login --key ck_…` from a shell with history disabled to avoid that.\n',
     );
     key = (await rl.question('API key: ')).trim();
@@ -32,7 +32,8 @@ export async function login(args: ParsedArgs): Promise<number> {
   if (!key.startsWith('ck_')) {
     process.stderr.write(
       `That does not look like a workspace API key (expected a ck_ prefix, got "${key.slice(0, 6)}…").\n` +
-        'A dashboard session token is not an API key — create one under Settings → API keys.\n',
+        'A dashboard session token is not an API key — create one under ' +
+          'Workspace → Integrations → Developer → API keys.\n',
     );
     return 1;
   }

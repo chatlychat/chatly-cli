@@ -44,6 +44,7 @@ describe('writesFor builds the request, and the request is what is asserted', ()
         bots: [
           {
             id: 'bot1',
+            type: 'external',
             slug: 'push',
             name: 'Push',
             model: 'gpt-4o-mini',

@@ -145,28 +145,6 @@ describe('chatly plan / chatly apply', () => {
     expect(text).toContain('= brands/acme   unchanged');
   });
 
-  it('plan --exit-code answers 2 for drift and 0 for none, and still writes nothing', async () => {
-    const drift: Seen[] = [];
-    expect(
-      await run(
-        ['plan', '--file', file(DOC), '--key', 'ck_t', '--exit-code'],
-        factoryFor(reads, drift),
-      ),
-    ).toBe(2);
-    expect(drift.every((s) => s.method === 'GET')).toBe(true);
-
-    const clean = {
-      version: 1,
-      resources: { brands: [{ slug: 'acme', name: 'Acme' }] },
-    };
-    expect(
-      await run(
-        ['plan', '--file', file(clean, 'clean.json'), '--key', 'ck_t', '--exit-code'],
-        factoryFor(reads, []),
-      ),
-    ).toBe(0);
-  });
-
   /* ══ apply ══════════════════════════════════════════════════════════════ */
 
   it('apply writes the changes, and the request bodies are what the diff said', async () => {

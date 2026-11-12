@@ -74,36 +74,59 @@ export function narrowTo(live: unknown, desired: unknown): unknown {
   return Object.fromEntries(Object.keys(desired).map((k) => [k, narrowTo(live[k], desired[k])]));
 }
 
+export interface RedactedSplit {
+  readonly live: unknown;
+  readonly desired: unknown;
+  readonly redacted: boolean;
+  /**
+   * The dotted paths whose live value is `__redacted__`, in document order.
+   *
+   * The reason this is not merely a boolean: `plan` said "unchanged" over a
+   * channel whose Atlas events secret was wrong, and the only note it printed
+   * was that `config` "holds credentials". An operator cannot act on that —
+   * they cannot tell whether the field they just wrote is the one being
+   * skipped, or whether it is set at all. Naming the leaves is the difference
+   * between a note and an answer (CH-26).
+   */
+  readonly paths: ReadonlyArray<string>;
+}
+
 /**
  * A MERGE-written object compared leaf by leaf, so one redacted credential
  * hides itself and nothing else. `live` and `desired` come back with every
  * path whose live value is `__redacted__` (or sits inside a redacted array)
- * removed from BOTH; `redacted` says whether any was. Without this a single
- * `identityVerification.secret` in a channel's `config` made the whole
- * `config` unreadable, and drift on its other keys went unreported.
+ * removed from BOTH; `redacted` says whether any was, and `paths` says which.
+ * Without this a single `identityVerification.secret` in a channel's `config`
+ * made the whole `config` unreadable, and drift on its other keys went
+ * unreported.
  */
-export function splitRedacted(
-  live: unknown,
-  desired: unknown,
-): { live: unknown; desired: unknown; redacted: boolean } {
-  if (isPlainObject(live) && isPlainObject(desired)) {
-    const l: Record<string, unknown> = {};
-    const d: Record<string, unknown> = {};
-    let redacted = false;
-    for (const k of Object.keys(desired)) {
-      const r = splitRedacted(live[k], desired[k]);
-      if (r.redacted) {
-        redacted = true;
+export function splitRedacted(live: unknown, desired: unknown): RedactedSplit {
+  const paths: string[] = [];
+  const walk = (l: unknown, d: unknown, trail: ReadonlyArray<string>): RedactedSplit => {
+    if (isPlainObject(l) && isPlainObject(d)) {
+      const nextLive: Record<string, unknown> = {};
+      const nextDesired: Record<string, unknown> = {};
+      let redacted = false;
+      for (const k of Object.keys(d)) {
+        const r = walk(l[k], d[k], [...trail, k]);
+        if (r.redacted) {
+          redacted = true;
+        }
+        if (r.live !== SKIP) {
+          nextLive[k] = r.live;
+          nextDesired[k] = r.desired;
+        }
       }
-      if (r.live !== SKIP) {
-        l[k] = r.live;
-        d[k] = r.desired;
-      }
+      return { live: nextLive, desired: nextDesired, redacted, paths };
     }
-    return { live: l, desired: d, redacted };
-  }
-  return isRedacted(live)
-    ? { live: SKIP, desired: SKIP, redacted: true }
-    : { live, desired, redacted: false };
+    if (isRedacted(l)) {
+      // The leaf itself, by its path. A redacted ARRAY is one entry: the
+      // sentinel is somewhere inside it and the server will not say where.
+      paths.push(trail.join('.'));
+      return { live: SKIP, desired: SKIP, redacted: true, paths };
+    }
+    return { live: l, desired: d, redacted: false, paths };
+  };
+  return walk(live, desired, []);
 }
 const SKIP = Symbol('redacted');

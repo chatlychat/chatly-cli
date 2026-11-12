@@ -12,6 +12,7 @@
  */
 import { bool, str, type ParsedArgs } from '../args.js';
 import { itemsOf, printJson } from '../output.js';
+import { atlasReceiverChecks } from './doctor-atlas-receiver.js';
 import { exitCodeFor, runChecks, selectChannels, type DoctorCheck } from './doctor-checks.js';
 import { readinessChecks, unavailable } from './doctor-readiness.js';
 
@@ -22,7 +23,28 @@ import type { ChatlyClient } from '@chatlychat/sdk-node';
  * `string | undefined`, which is not a thing a template literal may carry.
  */
 const symbolFor = (verdict: DoctorCheck['verdict']): string =>
-  verdict === 'pass' ? 'ok  ' : verdict === 'warn' ? 'warn' : 'FAIL';
+  verdict === 'pass' ? 'ok  ' : verdict === 'warn' ? 'warn' : verdict === 'skip' ? 'SKIP' : 'FAIL';
+
+/**
+ * The headline, and the one number FormFlow read before shipping.
+ *
+ * Exported so a spec can drive it: `doctor` itself probes the network
+ * through the global `fetch`, and the arithmetic here is the whole of the
+ * reported defect — the old line computed "ok" as `length - failed - warned`,
+ * so every check that could not be MADE was counted among the ones that
+ * passed. `12 check(s): 12 ok, 0 warning(s), 0 failed` over two dead
+ * knowledge sources. SKIP is its own number now, and that is the point of
+ * the word. See `Verdict` in `doctor-checks.ts`.
+ */
+export function summaryLine(checks: readonly DoctorCheck[]): string {
+  const count = (v: DoctorCheck['verdict']): number =>
+    checks.filter((c) => c.verdict === v).length;
+  const [failed, warned, skipped] = [count('fail'), count('warn'), count('skip')];
+  return (
+    `${String(checks.length)} check(s): ${String(checks.length - failed - warned - skipped)} ok, ` +
+    `${String(warned)} warning(s), ${String(skipped)} skipped, ${String(failed)} failed`
+  );
+}
 
 export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const only = str(args.flags, 'channel');
@@ -42,6 +64,18 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
     );
     return 2;
   }
+
+  /*
+   * ONE read of `GET /v1/integration-health`, shared by the verdicts it
+   * already grades and the Atlas receiver rows derived from the same body
+   * (CH-26). Memoised rather than requested twice; a rejected promise is
+   * awaited by both callers and each reports its own absence.
+   */
+  let healthBody: Promise<Record<string, unknown>> | undefined;
+  const readHealth = (): Promise<Record<string, unknown>> => {
+    healthBody ??= chatly.request<Record<string, unknown>>('GET', '/v1/integration-health');
+    return healthBody;
+  };
 
   const checks = await runChecks(
     channels,
@@ -63,7 +97,15 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
         return url;
       },
       health: async () => {
-        const res = await chatly.request<{ checks?: unknown }>('GET', '/v1/integration-health');
+        const res = await readHealth();
+        const graded = res['checks'];
+        return Array.isArray(graded) ? (graded as readonly unknown[]) : [];
+      },
+      identityContract: async (channelId: string) => {
+        const res = await chatly.request<{ checks?: unknown }>(
+          'GET',
+          `/v1/channels/${encodeURIComponent(channelId)}/identity-contract`,
+        );
         return Array.isArray(res.checks) ? (res.checks as readonly unknown[]) : [];
       },
     },
@@ -74,6 +116,18 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
     checks.push(...readinessChecks(await chatly.request('GET', '/v1/workspace/readiness')));
   } catch (err) {
     checks.push(unavailable(err instanceof Error ? err.message : 'request failed'));
+  }
+
+  /*
+   * The Atlas event receiver (CH-26). Derived from the body already read
+   * above, so this costs no second request. A read that FAILED is reported by
+   * `healthChecks` as one SKIP row naming the request; a second row here
+   * would be the same absence twice.
+   */
+  try {
+    checks.push(...atlasReceiverChecks(await readHealth(), new Date()));
+  } catch {
+    /* reported by `healthChecks` — see above. */
   }
 
   if (bool(args.flags, 'json')) {
@@ -92,11 +146,6 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
       process.stdout.write(`      → ${check.fix}\n`);
     }
   }
-  const failed = checks.filter((c) => c.verdict === 'fail').length;
-  const warned = checks.filter((c) => c.verdict === 'warn').length;
-  process.stdout.write(
-    `\n${String(checks.length)} check(s): ${String(checks.length - failed - warned)} ok, ` +
-      `${String(warned)} warning(s), ${String(failed)} failed\n`,
-  );
+  process.stdout.write(`\n${summaryLine(checks)}\n`);
   return exitCodeFor(checks);
 }

@@ -48,6 +48,11 @@
  * being wrong silently, which is how the wrong resource gets overwritten.
  */
 import { refusedRowKeys, sectionWarnings } from './diff-warnings.js';
+import {
+  discardedFieldWarnings,
+  strictUnknownFieldKeys,
+  unknownFieldWarnings,
+} from './field-rules-checks.js';
 import { orphanPathParams, planRow } from './plan-row.js';
 import {
   normalizedKey,
@@ -69,6 +74,17 @@ export interface FieldChange {
   readonly to: unknown;
   /** The route that would write it. Undefined means nothing can. */
   readonly route: UpdateRoute | undefined;
+  /**
+   * This value CARRIES A CREDENTIAL, so no renderer may print it.
+   *
+   * Set where a write-only secret is being pushed deliberately
+   * (`--rotate-secret`). `fromEnv` already masks a value that came from
+   * `${env:…}`, and that is not enough on its own: an author who pasted the
+   * secret into the file gets no masking from it, and `plan --json | tee
+   * plan.json` is a thing somebody does on the first day. A flag on the
+   * change is independent of where the value came from.
+   */
+  readonly secret?: boolean;
 }
 
 export interface PlanItem {
@@ -113,6 +129,18 @@ export interface Plan {
   /** Types whose live list may be incomplete, so `--prune` is refused. */
   readonly pruneUnsafe: ReadonlyArray<string>;
   readonly refused: ReadonlyArray<string>; // see `refusedRowKeys` in diff-warnings.ts
+  /**
+   * `type/key` for a live row that MATCHES the document and is broken anyway
+   * (CH-05) — a documentation source whose last sync failed.
+   *
+   * A third list beside `blocked` and `refused`, and deliberately not folded
+   * into either: those two are about whether a write will happen, this one is
+   * about whether the resource works. `plan` answers 3 for it and `apply`'s
+   * read-back refuses to say "everything matches" while it is non-empty.
+   * Counting it as a `blocked` item would make every total wrong, which is
+   * the mistake `planForJson` already records one list over.
+   */
+  readonly unhealthy: ReadonlyArray<string>;
 }
 
 export interface LiveSection {
@@ -200,6 +228,26 @@ export interface PlanOptions {
    */
   readonly writeOnly?: boolean;
   /**
+   * Send the credentials that live INSIDE a merge-written field, and nothing
+   * else that cannot be read back.
+   *
+   * `--rotate-secret`. The narrower half of `--write-only`, for the one job
+   * people actually have: Atlas minted a new events signing secret, it is in
+   * the file as `${env:…}`, and it has to reach
+   * `config.identityVerification.eventsSecret`. `--write-only` does that too
+   * and also re-sends every docs-source token and customer-card
+   * `Authorization` header the document names — a blast radius nobody wants
+   * from a secret rotation, and the reason this flag exists rather than a
+   * line in the runbook saying "use --write-only".
+   *
+   * Chatly does NOT generate the value: Atlas mints it and an operator pastes
+   * it (`workspace-channel-secrets.ts` classifies it `provider_credential`
+   * for exactly that reason), so there is nothing for a server-side rotate
+   * route to mint. The rotation is a WRITE of a value the author already
+   * holds, which is why this is a plan option and not an endpoint.
+   */
+  readonly rotateSecrets?: boolean;
+  /**
    * Live rows of a type the document REFERENCES without declaring a section
    * for it — resolvable by a reference, never planned, never an orphan.
    *
@@ -209,7 +257,14 @@ export interface PlanOptions {
    * declared types and the row is blocked as naming something "neither on
    * the server nor created by this plan" — which is false, the tenant is on
    * the server. Declaring the section instead would turn every other tenant
-   * into an orphan line. Empty for the workspace document.
+   * into an orphan line.
+   *
+   * The WORKSPACE document needs it too, and this line read "Empty for the
+   * workspace document" while a `botRoutes`-only file blocked every row with
+   * `names bots/fd-bot, which is neither on the server nor created by this
+   * plan` (ForgeDeck 2026-11-07 item 4, reproduced twice). `referencedDefs`
+   * in `commands/workspace-as-code.ts` derives the list from each def's own
+   * `references`, so a new reference is covered without touching this.
    */
   readonly referenced?: ReadonlyArray<{ readonly def: ResourceDef; readonly section: LiveSection }>;
 }
@@ -221,6 +276,7 @@ export function buildPlan(
 ): Plan {
   const items: PlanItem[] = [];
   const warnings: string[] = [];
+  const unhealthy: string[] = []; // live rows that are broken; see `Plan.unhealthy`
   const refused: string[] = []; // keys the server will refuse; see `refusedRowKeys`
   const pruneUnsafe: string[] = [];
   const known = new Map<string, KnownIds>();
@@ -250,14 +306,29 @@ export function buildPlan(
     }
 
     const declared = new Set<string>();
-    const sendable = new Set<string>();
+    /*
+     * The planned action per normalized key, for the warning rules. A Set of
+     * "sendable" keys was not enough once the required-field rule needed
+     * CREATE specifically, and two parallel collections answering different
+     * questions about the same row is how they drift apart.
+     */
+    const actions = new Map<string, PlanItem['action']>();
     for (const row of section.rows) {
       const norm = normalizedKey(def, row.key);
       declared.add(norm);
       const item = planRow(def, row, norm, index, known, opts);
       items.push(item);
-      if (item.action === 'create' || item.action === 'update') {
-        sendable.add(norm);
+      actions.set(norm, item.action);
+      /*
+       * The same pure `liveState` call `planRow` makes for the NOTE, made
+       * here for the EXIT CODE. Two calls rather than a field smuggled out
+       * through `PlanItem`: it is a pure read of a row both already hold, and
+       * a new item field would have to be threaded through the orphan and
+       * blocked constructors that can never set it.
+       */
+      const live = index.byKey.get(norm);
+      if (live !== undefined && def.liveState?.(live)?.failed === true) {
+        unhealthy.push(`${def.type}/${row.key}`);
       }
       if (item.action === 'create') {
         // A later section may reference it; the id is unknown until apply.
@@ -278,12 +349,36 @@ export function buildPlan(
      * and per-row alike, is still emitted as one block before the next
      * section's, and nothing in `planRow` reads `warnings`.
      */
+    const refusing = sectionWarnings(def, section.rows, liveSection, index, (key) =>
+      actions.get(normalizedKey(def, key)),
+    );
+    warnings.push(...refusing);
+    /*
+     * `refusedRowKeys` is given the REFUSING warnings only. It decides by
+     * prefix match, so an advisory about a field the server silently drops
+     * would otherwise make `plan` exit 3 on a document `apply` accepts.
+     */
+    refused.push(...refusedRowKeys(def, items, liveSection, refusing));
+    warnings.push(...unknownFieldWarnings(def, section.rows));
+    // Advisory for the same reason, and `index.byKey` is normalized, so the
+    // document's own spelling has to be put through `normalizedKey` first.
     warnings.push(
-      ...sectionWarnings(def, section.rows, liveSection, index, (key) =>
-        sendable.has(normalizedKey(def, key)),
+      ...discardedFieldWarnings(def, section.rows, (key) =>
+        index.byKey.get(normalizedKey(def, key)),
       ),
     );
-    refused.push(...refusedRowKeys(def, items, liveSection, warnings));
+    /*
+     * A STRICT route's unknown field IS a refusal — it answers
+     * `Unrecognized key(s)` and writes nothing — so it belongs in `refused`
+     * even though its warning is appended as advice. A dropping route's does
+     * not, and that asymmetry is the whole reason the two are separated here.
+     */
+    refused.push(
+      ...strictUnknownFieldKeys(def, section.rows).filter((k: string) => {
+        const action = actions.get(normalizedKey(def, k));
+        return action === 'create' || action === 'update';
+      }),
+    );
 
     for (const [key, row] of index.byKey) {
       if (declared.has(key)) {
@@ -318,7 +413,41 @@ export function buildPlan(
     }
   }
 
-  return { items, warnings, pruneUnsafe, refused };
+  warnings.push(...businessHoursWarnings(live));
+  return { items, warnings, pruneUnsafe, refused, unhealthy };
+}
+
+/**
+ * "Business hours are off and a web channel is live" (CH-24).
+ *
+ * Cross-resource, so it cannot be a `ResourceDef.extraWarnings` hook — those
+ * see one type's rows. It reads the live sections both resources already
+ * fetched and writes nothing.
+ *
+ * shortcut: it only fires when the document declares BOTH sections, because
+ * `plan` reads only the types the file mentions and that property is load
+ * bearing (an unmanaged resource is not drift). A workspace whose file says
+ * nothing about either is covered by `chatly doctor`, which reads
+ * `business_hours.set` from the server for every workspace. Upgrade this if
+ * `plan` ever grows a reason to read a type the document does not name.
+ */
+function businessHoursWarnings(live: ReadonlyMap<string, LiveSection>): string[] {
+  const hours = live.get('businessHours')?.rows[0];
+  if (hours === undefined || hours['enabled'] !== false) {
+    return [];
+  }
+  const web = (live.get('channels')?.rows ?? []).filter(
+    (c) => c['type'] === 'web' && c['enabled'] !== false,
+  );
+  if (web.length === 0) {
+    return [];
+  }
+  return [
+    `businessHours.enabled is false while ${String(web.length)} web channel(s) are enabled. ` +
+      'Every visitor is told the same thing at 03:00 as at 11:00, no trigger and no workflow ' +
+      'can branch on whether you are open, and routing cannot hold a conversation until ' +
+      'somebody is on. Set `enabled: true` with a `tz` and a `schedule`.',
+  ];
 }
 
 /** Counts for the summary line. */
