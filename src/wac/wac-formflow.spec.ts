@@ -26,7 +26,11 @@ const source = (over: Record<string, unknown> = {}): Record<string, unknown> => 
   label: 'handbook',
   provider: 'gitbook',
   status: 'active',
-  syncStatus: 'ok',
+  // `synced`, NOT `ok`. `ok` is not a member of the DTO's enum
+  // (`queued|synced|synced_empty|synced_partial|failed|paused`), and this
+  // fixture shipping an impossible value is why `is silent on a healthy
+  // source` below passed while CH-31 warned under every real source.
+  syncStatus: 'synced',
   lastError: null,
   lastSyncedAt: '2026-11-10T09:00:00.000Z',
   ...over,
@@ -68,20 +72,83 @@ describe('CH-05 — a documentation source that matches the document and is dead
   });
 
   /*
-   * `pending` and `syncing` are a source MID-RUN. Grading them would make the
-   * exit code depend on when the pipeline happened to look, which is a flaky
-   * gate rather than a gate — so they get the note and not the verdict.
+   * `queued` is a source MID-RUN. Grading it would make the exit code depend
+   * on when the pipeline happened to look, which is a flaky gate rather than
+   * a gate — so it gets the note and not the verdict.
    */
-  it('notes a syncing source without calling it failed', () => {
-    const plan = planWith(source({ syncStatus: 'pending' }));
+  it('notes a queued source without calling it failed', () => {
+    const plan = planWith(source({ syncStatus: 'queued' }));
     expect(plan.unhealthy).toEqual([]);
-    expect(renderPlan(plan, RENDER)).toContain('syncStatus is `pending`');
+    expect(renderPlan(plan, RENDER)).toContain('syncStatus is `queued`');
   });
 
   it('is silent on a healthy source', () => {
     const plan = planWith(source());
     expect(plan.unhealthy).toEqual([]);
     expect(renderPlan(plan, RENDER)).not.toContain('syncStatus');
+  });
+});
+
+/*
+ * CH-31. Reported by FormFlow on 2026-11-12: `plan` printed "The articles this
+ * source imports are stale or missing" under all THREE of their healthy
+ * sources, with exit 0. The skip tested `syncStatus === 'ok'`, and `ok` is not
+ * a member of `docsSourcesDto.syncStatus` — so it matched nothing the API can
+ * return and the warning fired always. A warning that always fires is the same
+ * defect as the silence CH-05 replaced.
+ *
+ * One case per enum member, so a future edit cannot quietly re-grade one.
+ */
+describe('CH-31 — every syncStatus the API can actually return', () => {
+  const planWith = (liveRow: Record<string, unknown>) =>
+    buildPlan(
+      parseDocument(doc({ docsSources: [{ label: 'handbook', status: 'active' }] })),
+      live({ docsSources: [liveRow] }),
+    );
+
+  /*
+   * CONTROL: restore `status === 'ok'` as the only healthy value in
+   * `docsSourceState` and this one test fails — it is the whole bug.
+   */
+  it('`synced` is healthy and says nothing at all', () => {
+    const plan = planWith(source({ syncStatus: 'synced' }));
+    expect(plan.unhealthy).toEqual([]);
+    const text = renderPlan(plan, RENDER);
+    expect(text).not.toContain('syncStatus');
+    expect(text).not.toContain('stale or missing');
+  });
+
+  it('`failed` is the only one that moves the verdict', () => {
+    expect(planWith(source({ syncStatus: 'failed' })).unhealthy).toEqual(['docsSources/handbook']);
+    for (const st of ['synced', 'synced_empty', 'synced_partial', 'queued', 'paused']) {
+      expect(planWith(source({ syncStatus: st })).unhealthy, st).toEqual([]);
+    }
+  });
+
+  /*
+   * These two DO keep a note: one imported nothing, the other skipped pages,
+   * and an operator wants both told while the diff reads `unchanged`.
+   */
+  it('`synced_empty` and `synced_partial` are noted but not failing', () => {
+    for (const st of ['synced_empty', 'synced_partial']) {
+      const text = renderPlan(planWith(source({ syncStatus: st })), RENDER);
+      expect(text, st).toContain(`syncStatus is \`${st}\``);
+    }
+  });
+
+  /*
+   * And neither `queued` nor `paused` may claim anything about the ARTICLES:
+   * one has not run yet, the other was stopped deliberately. Saying "stale or
+   * missing" about them is CH-31 again in a smaller font.
+   * CONTROL: let them fall through to the generic note and this fails.
+   */
+  it('`queued` and `paused` do not claim the articles are stale', () => {
+    const queued = renderPlan(planWith(source({ syncStatus: 'queued' })), RENDER);
+    expect(queued).toContain('waiting to run');
+    expect(queued).not.toContain('stale or missing');
+    const paused = renderPlan(planWith(source({ syncStatus: 'paused' })), RENDER);
+    expect(paused).toContain('paused');
+    expect(paused).not.toContain('stale or missing');
   });
 });
 

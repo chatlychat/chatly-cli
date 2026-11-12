@@ -1,5 +1,28 @@
 # @chatlychat/cli — changelog
 
+## 0.11.1 — 2026-11-12
+
+A **patch**: one wrong warning, and a file that was never in the tarball.
+
+- **`wac plan` stopped calling every healthy docs source stale** (CH-31). The
+  conditional skipped `syncStatus === 'ok'`, and `ok` is not a member of the
+  API's enum — the values are `queued`, `synced`, `synced_empty`,
+  `synced_partial`, `failed` and `paused`. So a source reading `synced`, which
+  is the normal healthy state, fell through to "its articles may be stale or
+  missing". The test fixture used `'ok'`, which is why a suite that had a
+  `is silent on a healthy source` case passed against the bug for its whole
+  life; the fixture is now a value the server can actually send, and the four
+  statuses nobody had graded each have a case. `queued` and `paused` get
+  accurate sentences of their own rather than the stale-or-missing one.
+
+- **`CHANGELOG.md` is in the published tarball** (CH-33). `npm pack` shipped
+  `dist`, `README.md`, `LICENSE` and `package.json`, so the one file that says
+  what changed between two versions was readable on GitHub and nowhere a
+  consumer installs from. Four of the eleven published packages were in that
+  state — this one, `@chatlychat/mcp`, the React Native SDK and
+  `@chatlychat/widget-testing` — and `check-sibling-peer-ranges.mjs` now fails
+  the build on a package whose `files` omits it.
+
 ## 0.11.0 — 2026-11-12
 
 A **minor**: `chatly atlas-verify` is the half of the Atlas event-receiver

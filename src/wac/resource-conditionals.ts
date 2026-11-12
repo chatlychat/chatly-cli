@@ -315,16 +315,48 @@ export const MACRO_WARNINGS: NonNullable<ResourceDef['extraWarnings']> = (
  * them — and nothing had ever read them. FormFlow's deploy gate printed `0 to
  * create, 0 to change, 4 unchanged` over two dead knowledge sources.
  *
- * Only `failed` is failing. `pending` and `syncing` are a source mid-run, and
- * grading them would make the exit code depend on when the pipeline happened
- * to look — a flaky gate rather than a gate. They still get the note.
+ * Only `failed` is failing. `queued` is a source mid-run, and grading it would
+ * make the exit code depend on when the pipeline happened to look — a flaky
+ * gate rather than a gate. It still gets the note.
+ *
+ * ── The healthy value is `synced`, and this read `ok` (CH-31) ─────────────
+ *
+ * `docsSourcesDto.syncStatus` is
+ * `z.enum(['queued','synced','synced_empty','synced_partial','failed','paused'])`
+ * and **`ok` is not a member**, so the skip below matched nothing the API can
+ * ever return and every HEALTHY source got "The articles this source imports
+ * are stale or missing". FormFlow saw it under all three of theirs, on a plan
+ * that correctly exited 0 — a warning that fires always is a warning nobody
+ * reads, which is the same defect as the silence it replaced.
+ *
+ * `synced_empty` and `synced_partial` deliberately DO keep a note: the first
+ * imported nothing and the second skipped pages, and both are states an
+ * operator wants told about while the diff says `unchanged`. Neither is
+ * `failed`, so neither moves the exit code.
  */
 export function docsSourceState(
   live: Readonly<Record<string, unknown>>,
 ): { note: string; failed: boolean } | undefined {
   const status = live['syncStatus'];
-  if (typeof status !== 'string' || status === '' || status === 'ok') {
+  // `ok` is kept beside `synced` only because this function shipped reading
+  // it; it is not in the DTO's enum. Removing it would change nothing, and
+  // keeping it cannot resurrect the bug now that the real value is here.
+  if (typeof status !== 'string' || status === '' || status === 'ok' || status === 'synced') {
     return undefined;
+  }
+  if (status === 'queued' || status === 'paused') {
+    // Neither is a claim about the articles: one has not run yet, the other
+    // was stopped on purpose. Saying "stale or missing" about them is the
+    // same false statement CH-31 reported, in a smaller font.
+    const when = typeof live['lastSyncedAt'] === 'string' ? live['lastSyncedAt'] : 'never';
+    return {
+      note:
+        `syncStatus is \`${status}\` (last synced ${when}). ` +
+        (status === 'queued'
+          ? 'A sync is waiting to run, so the articles may not reflect this plan yet.'
+          : 'This source is paused and will not re-import until it is resumed.'),
+      failed: false,
+    };
   }
   const err = typeof live['lastError'] === 'string' ? live['lastError'] : null;
   const when = typeof live['lastSyncedAt'] === 'string' ? live['lastSyncedAt'] : 'never';
