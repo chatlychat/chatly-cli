@@ -31,21 +31,25 @@
  *   webhooks        url         NO CONSTRAINT
  *   docsSources     label       NO CONSTRAINT
  *   channels        key         UNIQUE (workspace_id, key) WHERE NOT NULL — nullable
+ *   members         email       NO CONSTRAINT — on `workspace_invites`
  *
  * The first five are real: the database refuses a second row, so matching on
- * the key cannot pick the wrong one. The next four are a CONVENTION the
+ * the key cannot pick the wrong one. `botRoutes`, `triggers`, `webhooks`,
+ * `docsSources` and `members` are a CONVENTION the
  * document enforces rather than a constraint the server does — so `diff.ts`
  * refuses to touch a key that appears twice on either side instead of
  * guessing, which is the only honest thing to do with a key that can repeat.
  *
  * ── Where the defs live ─────────────────────────────────────────────────
  *
- * Most of them are below. Four are in files of their own, because this one
- * reached the 650-line ceiling and each of those four has a story worth
+ * Most of them are below. Five are in files of their own, because this one
+ * reached the 650-line ceiling and each of those five has a story worth
  * reading on its own: `resources-privacy.ts`, `resources-singletons.ts`
- * (business hours and tone — one row per workspace), and
+ * (business hours and tone — one row per workspace),
  * `resources-channels.ts` (the resource that needed a natural key ADDED to
- * the schema before a document could describe one).
+ * the schema before a document could describe one) and `resources-members.ts`
+ * (the one whose live list is a different collection from the thing it
+ * describes, and the one no key can update).
  *
  * ═══ VERIFIED AGAINST HANDLERS, NOT AGAINST NAMES ════════════════════════
  *
@@ -97,6 +101,7 @@ export {
 import * as cond from './resource-conditionals.js';
 import { asRecord, normaliseShortCode, SERVER_OWNED } from './resource-shared.js';
 import { CHANNELS } from './resources-channels.js';
+import { MEMBERS } from './resources-members.js';
 import { PRIVACY_PARTNERS } from './resources-privacy.js';
 import { BUSINESS_HOURS, TONE } from './resources-singletons.js';
 
@@ -119,6 +124,10 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
   BUSINESS_HOURS,
   TONE,
   CHANNELS,
+  // Teammates, described as the invitations that create them (CH-08). Early,
+  // because nothing references it and somebody reading the file looks for
+  // "who is in this workspace" near the top.
+  MEMBERS,
   {
     type: 'brands',
     readScope: 'workspace:read',

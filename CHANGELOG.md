@@ -1,5 +1,71 @@
 # @chatlychat/cli — changelog
 
+## 0.12.0 — 2026-11-13
+
+A **minor**, and most of it is the 2026-11-13 FormFlow round, which was
+written and never released: they rechecked against 0.11.1 and found every item
+open, because 0.11.1 is where the code was not. Read the exit-code change
+first — it is the one that can turn a green pipeline red, and that is the
+point of it.
+
+- **`chatly plan` exits 3 for a document the server will refuse, with no
+  `--exit-code`** (CH-16). It printed the refusal, named the field, listed the
+  key under `refused` — and exited 0, so a deploy gate that runs `chatly plan`
+  reported success over a file the API answers 400 for. A refusal is not
+  drift: it is this CLI predicting a rejection, and `--exit-code` exists to
+  opt into DRIFT reporting, not into being told the file is broken. `unhealthy`
+  (CH-05) already worked this way and the argument is the same one — a gate
+  that has to be opted into is a gate that was off on the day it mattered.
+  A BLOCKED row is unchanged: 3 with `--exit-code`, 1 without.
+
+- **A typo one level down is caught before `apply` sends it** (CH-16). The
+  enum table was keyed by top-level field name and read against that field's
+  own value, so `config` being an object hid every closed set inside it:
+  `identityVerification.tokenProvider: "atlsa"` planned as a clean change.
+  `nestedEnums` is keyed by dotted path, generated from the served OpenAPI
+  document, enums only and only where no `anyOf`/`oneOf`/`allOf` sits anywhere
+  on the path — 33 paths on `PATCH /v1/channels/{}` alone. The warning names
+  the full path, the value and the accepted set.
+
+- **`members:` in `chatly.yaml`** (CH-08). Natural key `email`, matched
+  case-insensitively against `GET /v1/invites?status=all` — the INVITATION
+  list, not the member list, because a member row does not exist until the
+  person accepts and matching on members would re-invite (and re-email) every
+  teammate on every deploy. A changed `role` plans as `blocked` rather than as
+  a write: `PATCH /v1/memberships/{id}/role` takes no API key. `--prune` never
+  removes anybody. **This needs the matching API build**: until
+  `POST /v1/invites` accepts a flat entry beside the batch, a `members:`
+  section answers 400 with `invites: Required`.
+
+- **`chatly csp [--format next|header|json] [--install react]`** (CH-13). The
+  refresh command `chatly init` never had: `chatly csp --format next >
+chatly.csp.mjs` in `prebuild` and the policy cannot go stale. `--format
+header` emits DIRECTIVES to merge, never a whole header — two
+  `Content-Security-Policy` headers intersect rather than extend, so a second
+  one blocks the host's own scripts. `--install react` drops the
+  `'sha256-…'` sources, which are hashes of the inline embed snippet that a
+  `@chatlychat/widget-react` or `<chatly-widget>` install never runs: an
+  integrator reading hashes in a policy their widget appears to violate
+  reaches for `'unsafe-inline'`, which is a real weakening caused by a list
+  describing a different install. The default KEEPS them, because an unmatched
+  hash is inert while a missing one blocks the snippet outright.
+
+- **The generated `chatly.csp.mjs` names its own refresh command.** It said
+  "Re-run `chatly init`", and `init` never overwrites a file it has written —
+  so the one sentence in it about staying current pointed at a dead end. It
+  now says `chatly csp --format next > chatly.csp.mjs`.
+
+- **`chatly plan` exits 3 over a knowledge source that failed its last sync**
+  (CH-05), whether or not `--exit-code` was passed, and `apply` no longer
+  prints `Read back: everything matches the document.` while one is failing.
+  A plan can be entirely `=` and still be bad news.
+
+- **`chatly whoami --for plan|apply|doctor`** (CH-17) names the EXACT scope a
+  command is missing, from one read of the credential's own `whoami` — it
+  never probes a write. Scope implication is honoured (`kb:write` covers
+  `kb:write:sources`), and a key expiring inside 60 days is called out, which
+  the server's own `key_expiry` check does not do.
+
 ## 0.11.1 — 2026-11-12
 
 A **patch**: one wrong warning, and a file that was never in the tarball.

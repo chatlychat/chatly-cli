@@ -58,6 +58,20 @@ export interface RouteFieldRules {
    */
   readonly strings: Readonly<Record<string, RouteStringRule>>;
   /**
+   * A closed set of strings NESTED inside an object property, keyed by its
+   * dotted path (`config.identityVerification.tokenProvider`).
+   *
+   * `enums` is read against a top-level field's own value, so a constraint one
+   * level down is invisible to it: `tokenProvider: "atlsa"` planned clean and
+   * exited 2 while `apply` answered 400, although the served document had
+   * listed the seven providers all along.
+   *
+   * Enums ONLY, and only where no `anyOf`/`oneOf`/`allOf` sits on the path.
+   * A nested TYPE claim would have to reason about `null` meaning "delete this
+   * key" in a merge patch; a closed set of strings has no such ambiguity.
+   */
+  readonly nestedEnums: Readonly<Record<string, ReadonlyArray<string>>>;
+  /**
    * Each arm of a `oneOf`/`anyOf` body, on its own. Empty for every other
    * route, and for `allOf` (a conjunction, already merged above).
    *
@@ -145,6 +159,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       signingSecret: { min: 32, max: 256 },
       urlTemplate: { min: 1, max: 2048 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/bot-routes/{}': {
@@ -174,6 +189,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: { evaluate: ['conversation_start', 'every_message'] },
     itemEnums: {},
     strings: { name: { min: 1, max: 160 } },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/bots/{}': {
@@ -214,6 +230,12 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       name: { min: 1, max: 160 },
       systemPrompt: { min: 20, max: 20000 },
     },
+    nestedEnums: {
+      'guardrails.piiPolicy': ['allow', 'redact', 'deny'],
+      'personaMeta.world.avatar.anchor': ['center', 'base', 'top', 'back'],
+      'personaMeta.world.avatar.format': ['gltf', 'usdz', 'vrm'],
+      'personaMeta.world.idle': ['stand', 'wander', 'follow'],
+    },
     arms: [],
   },
   'PATCH /v1/bots/{}/external': {
@@ -230,6 +252,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: {},
     itemEnums: {},
     strings: { fallbackMessage: { min: 1, max: 500 }, webhookUrl: { min: 1, max: 2048 } },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/brands/{}': {
@@ -272,6 +295,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       slug: { min: 1, max: 64, pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$' },
       supportEmail: { max: 254 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/channels/{}': {
@@ -311,6 +335,49 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       name: { min: 1, max: 120 },
       statusSummaryUrl: { max: 500 },
     },
+    nestedEnums: {
+      'config.behavior.defaultTab': ['home', 'messages', 'help'],
+      'config.behavior.historyScope': ['visitor', 'audience'],
+      'config.brand.source': ['url', 'body'],
+      'config.identityVerification.eventsProvider': ['atlas', 'clerk', 'auth0', 'okta'],
+      'config.identityVerification.hashSubject': ['external_id', 'email'],
+      'config.identityVerification.mode': ['hmac', 'oidc', 'hmac+oidc', 'oidc+hmac'],
+      'config.identityVerification.onBan': ['end_session', 'block_contact'],
+      'config.identityVerification.tokenProvider': [
+        'generic',
+        'atlas',
+        'clerk',
+        'auth0',
+        'okta',
+        'entra',
+        'cognito',
+      ],
+      'config.theme.cardImageFit': ['cover', 'contain', 'fill', 'none', 'scale-down'],
+      'config.theme.chipWrap': ['wrap', 'nowrap'],
+      'config.theme.colorScheme': ['light', 'dark', 'auto'],
+      'config.theme.darkTheme.cardImageFit': ['cover', 'contain', 'fill', 'none', 'scale-down'],
+      'config.theme.darkTheme.chipWrap': ['wrap', 'nowrap'],
+      'config.theme.darkTheme.density': ['compact', 'comfortable'],
+      'config.theme.darkTheme.headerStyle': ['gradient', 'solid', 'plain', 'light'],
+      'config.theme.density': ['compact', 'comfortable'],
+      'config.theme.headerStyle': ['gradient', 'solid', 'plain', 'light'],
+      'config.theme.inlineTheme.cardImageFit': ['cover', 'contain', 'fill', 'none', 'scale-down'],
+      'config.theme.inlineTheme.chipWrap': ['wrap', 'nowrap'],
+      'config.theme.inlineTheme.density': ['compact', 'comfortable'],
+      'config.theme.inlineTheme.headerStyle': ['gradient', 'solid', 'plain', 'light'],
+      'config.theme.launcherIdleAnimation': ['none', 'wiggle', 'pulse', 'bounce'],
+      'config.theme.position': ['left', 'right'],
+      'config.widget.gifs.contentFilter': ['high', 'medium', 'low', 'off'],
+      'config.widget.syncedArticles': ['panel', 'source'],
+      'config.worldTheme.bubbleShape': ['rounded', 'square', 'cloud', 'none'],
+      'config.worldTheme.cardPedestal': ['plinth', 'float', 'hanger', 'none'],
+      'config.worldTheme.colorScheme': ['light', 'dark', 'auto'],
+      'config.worldTheme.darkTheme.panelMaterial': ['glass', 'matte', 'solid', 'none'],
+      'config.worldTheme.motionEntrance': ['fade', 'scale', 'slide', 'none'],
+      'config.worldTheme.motionPick': ['rise', 'drop', 'fade', 'none'],
+      'config.worldTheme.panelMaterial': ['glass', 'matte', 'solid', 'none'],
+      'config.worldTheme.typingLook': ['dots', 'pulse', 'avatar', 'none'],
+    },
     arms: [],
   },
   'PATCH /v1/customer-cards/{}': {
@@ -344,6 +411,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       title: { min: 1, max: 80 },
       url: { max: 2000 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/docs-sources/{}': {
@@ -353,9 +421,11 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       'defaultLocale',
       'forceLocale',
       'label',
+      'onConflict',
       'publishOnSync',
       'status',
       'syncIntervalMinutes',
+      'titleFrom',
       'token',
     ],
     loose: false,
@@ -365,12 +435,18 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       defaultLocale: 'string|null',
       forceLocale: 'string|null',
       label: 'string',
+      onConflict: 'string|null',
       publishOnSync: 'boolean',
       status: 'string',
       syncIntervalMinutes: 'integer',
+      titleFrom: 'string|null',
       token: 'string',
     },
-    enums: { status: ['active', 'paused'] },
+    enums: {
+      onConflict: ['adopt', 'skip', 'fail'],
+      status: ['active', 'paused'],
+      titleFrom: ['auto', 'title', 'h1', 'og'],
+    },
     itemEnums: {},
     strings: {
       baseUrl: { max: 500 },
@@ -379,6 +455,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       label: { min: 1, max: 160 },
       token: { min: 1, max: 500 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/macros/{}': {
@@ -404,17 +481,19 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       name: { min: 1, max: 200 },
       shortCode: { max: 65, pattern: '^\\/?[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
     },
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/webhooks/{}': {
     required: [],
-    allowed: ['alertContacts', 'enabled'],
+    allowed: ['alertContacts', 'enabled', 'verifiedIdentityOnly'],
     loose: false,
     strict: true,
-    types: { alertContacts: 'array', enabled: 'boolean' },
+    types: { alertContacts: 'array', enabled: 'boolean', verifiedIdentityOnly: 'boolean' },
     enums: {},
     itemEnums: {},
     strings: {},
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/webhooks/{}/schema-version': {
@@ -440,6 +519,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     },
     itemEnums: {},
     strings: {},
+    nestedEnums: {},
     arms: [],
   },
   'PATCH /v1/workspace/business-hours': {
@@ -451,6 +531,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: {},
     itemEnums: {},
     strings: { tz: { min: 1, max: 64 } },
+    nestedEnums: {},
     arms: [],
   },
   'POST /v1/ai/tools': {
@@ -482,6 +563,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: {},
     itemEnums: {},
     strings: { signingSecret: { min: 32, max: 256 } },
+    nestedEnums: {},
     arms: [
       {
         required: ['preset', 'url'],
@@ -558,6 +640,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: { evaluate: ['conversation_start', 'every_message'] },
     itemEnums: {},
     strings: { name: { min: 1, max: 160 } },
+    nestedEnums: {},
     arms: [],
   },
   'POST /v1/bots': {
@@ -598,6 +681,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       name: { min: 1, max: 160 },
       slug: { min: 1, max: 80, pattern: '^[a-z0-9-]+$' },
     },
+    nestedEnums: {},
     arms: [
       {
         required: ['type', 'name', 'webhookUrl'],
@@ -692,6 +776,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       slug: { min: 1, max: 64, pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$' },
       supportEmail: { max: 254 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'POST /v1/channels': {
@@ -738,6 +823,49 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       name: { min: 1, max: 120 },
       publicId: { min: 1, max: 64 },
     },
+    nestedEnums: {
+      'config.behavior.defaultTab': ['home', 'messages', 'help'],
+      'config.behavior.historyScope': ['visitor', 'audience'],
+      'config.brand.source': ['url', 'body'],
+      'config.identityVerification.eventsProvider': ['atlas', 'clerk', 'auth0', 'okta'],
+      'config.identityVerification.hashSubject': ['external_id', 'email'],
+      'config.identityVerification.mode': ['hmac', 'oidc', 'hmac+oidc', 'oidc+hmac'],
+      'config.identityVerification.onBan': ['end_session', 'block_contact'],
+      'config.identityVerification.tokenProvider': [
+        'generic',
+        'atlas',
+        'clerk',
+        'auth0',
+        'okta',
+        'entra',
+        'cognito',
+      ],
+      'config.theme.cardImageFit': ['cover', 'contain', 'fill', 'none', 'scale-down'],
+      'config.theme.chipWrap': ['wrap', 'nowrap'],
+      'config.theme.colorScheme': ['light', 'dark', 'auto'],
+      'config.theme.darkTheme.cardImageFit': ['cover', 'contain', 'fill', 'none', 'scale-down'],
+      'config.theme.darkTheme.chipWrap': ['wrap', 'nowrap'],
+      'config.theme.darkTheme.density': ['compact', 'comfortable'],
+      'config.theme.darkTheme.headerStyle': ['gradient', 'solid', 'plain', 'light'],
+      'config.theme.density': ['compact', 'comfortable'],
+      'config.theme.headerStyle': ['gradient', 'solid', 'plain', 'light'],
+      'config.theme.inlineTheme.cardImageFit': ['cover', 'contain', 'fill', 'none', 'scale-down'],
+      'config.theme.inlineTheme.chipWrap': ['wrap', 'nowrap'],
+      'config.theme.inlineTheme.density': ['compact', 'comfortable'],
+      'config.theme.inlineTheme.headerStyle': ['gradient', 'solid', 'plain', 'light'],
+      'config.theme.launcherIdleAnimation': ['none', 'wiggle', 'pulse', 'bounce'],
+      'config.theme.position': ['left', 'right'],
+      'config.widget.gifs.contentFilter': ['high', 'medium', 'low', 'off'],
+      'config.widget.syncedArticles': ['panel', 'source'],
+      'config.worldTheme.bubbleShape': ['rounded', 'square', 'cloud', 'none'],
+      'config.worldTheme.cardPedestal': ['plinth', 'float', 'hanger', 'none'],
+      'config.worldTheme.colorScheme': ['light', 'dark', 'auto'],
+      'config.worldTheme.darkTheme.panelMaterial': ['glass', 'matte', 'solid', 'none'],
+      'config.worldTheme.motionEntrance': ['fade', 'scale', 'slide', 'none'],
+      'config.worldTheme.motionPick': ['rise', 'drop', 'fade', 'none'],
+      'config.worldTheme.panelMaterial': ['glass', 'matte', 'solid', 'none'],
+      'config.worldTheme.typingLook': ['dots', 'pulse', 'avatar', 'none'],
+    },
     arms: [],
   },
   'POST /v1/customer-cards': {
@@ -761,10 +889,11 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       title: { min: 1, max: 80 },
       url: { max: 2000 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'POST /v1/docs-sources': {
-    required: ['organizationId', 'provider', 'spaceId', 'token'],
+    required: ['provider'],
     allowed: [
       'baseUrl',
       'defaultLocale',
@@ -772,12 +901,14 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       'forceLocale',
       'includePaths',
       'label',
+      'onConflict',
       'organizationId',
       'provider',
       'publishOnSync',
       'replaceSourceIds',
       'spaceId',
       'syncIntervalMinutes',
+      'titleFrom',
       'token',
     ],
     loose: false,
@@ -789,27 +920,31 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       forceLocale: 'string',
       includePaths: 'array',
       label: 'string',
+      onConflict: 'string',
       organizationId: 'string',
       provider: 'string',
       publishOnSync: 'boolean',
       replaceSourceIds: 'array',
       spaceId: 'string',
       syncIntervalMinutes: 'integer',
+      titleFrom: 'string',
       token: 'string',
     },
     enums: {
+      onConflict: ['adopt', 'skip', 'fail'],
       provider: [
+        'website',
         'gitbook',
         'forumulate',
         'discourse',
         'readme',
-        'website',
         'notion',
         'confluence',
         'zendesk',
         'intercom',
         'github',
       ],
+      titleFrom: ['auto', 'title', 'h1', 'og'],
     },
     itemEnums: {},
     strings: {
@@ -821,7 +956,110 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       spaceId: { min: 1, max: 200 },
       token: { max: 400 },
     },
-    arms: [],
+    nestedEnums: {},
+    arms: [
+      {
+        required: ['provider', 'baseUrl'],
+        types: {
+          baseUrl: 'string',
+          defaultLocale: 'string',
+          excludePaths: 'array',
+          forceLocale: 'string',
+          includePaths: 'array',
+          label: 'string',
+          onConflict: 'string',
+          organizationId: 'string',
+          provider: 'string',
+          publishOnSync: 'boolean',
+          replaceSourceIds: 'array',
+          spaceId: 'string',
+          syncIntervalMinutes: 'integer',
+          titleFrom: 'string',
+          token: 'string',
+        },
+        enums: {
+          onConflict: ['adopt', 'skip', 'fail'],
+          provider: ['website'],
+          titleFrom: ['auto', 'title', 'h1', 'og'],
+        },
+        itemEnums: {},
+        strings: {
+          baseUrl: { max: 300 },
+          defaultLocale: { max: 35 },
+          forceLocale: { max: 35 },
+          label: { min: 1, max: 160 },
+          organizationId: { min: 1, max: 200 },
+          spaceId: { min: 1, max: 200 },
+          token: { max: 400 },
+        },
+      },
+      {
+        required: ['provider', 'token', 'organizationId', 'spaceId'],
+        types: {
+          baseUrl: 'string',
+          defaultLocale: 'string',
+          excludePaths: 'array',
+          forceLocale: 'string',
+          includePaths: 'array',
+          label: 'string',
+          onConflict: 'string',
+          organizationId: 'string',
+          provider: 'string',
+          publishOnSync: 'boolean',
+          replaceSourceIds: 'array',
+          spaceId: 'string',
+          syncIntervalMinutes: 'integer',
+          titleFrom: 'string',
+          token: 'string',
+        },
+        enums: {
+          onConflict: ['adopt', 'skip', 'fail'],
+          provider: [
+            'gitbook',
+            'forumulate',
+            'discourse',
+            'readme',
+            'notion',
+            'confluence',
+            'zendesk',
+            'intercom',
+            'github',
+          ],
+          titleFrom: ['auto', 'title', 'h1', 'og'],
+        },
+        itemEnums: {},
+        strings: {
+          baseUrl: { max: 300 },
+          defaultLocale: { max: 35 },
+          forceLocale: { max: 35 },
+          label: { min: 1, max: 160 },
+          organizationId: { min: 1, max: 200 },
+          spaceId: { min: 1, max: 200 },
+          token: { max: 400 },
+        },
+      },
+    ],
+  },
+  'POST /v1/invites': {
+    required: [],
+    allowed: ['email', 'invites', 'role'],
+    loose: false,
+    strict: false,
+    types: {},
+    enums: {},
+    itemEnums: {},
+    strings: {},
+    nestedEnums: {},
+    arms: [
+      { required: ['invites'], types: { invites: 'array' }, enums: {}, itemEnums: {}, strings: {} },
+      {
+        required: ['email'],
+        types: { email: 'string', role: 'string' },
+        enums: { role: ['admin', 'agent', 'restricted', 'light_agent'] },
+        itemEnums: {},
+        strings: {},
+      },
+    ],
   },
   'POST /v1/macros': {
     required: ['name', 'scope'],
@@ -846,6 +1084,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       name: { min: 1, max: 200 },
       shortCode: { max: 65, pattern: '^\\/?[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
     },
+    nestedEnums: {},
     arms: [],
   },
   'POST /v1/triggers': {
@@ -882,11 +1121,19 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       id: { pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' },
       name: { min: 1, max: 160 },
     },
+    nestedEnums: {},
     arms: [],
   },
   'POST /v1/webhooks': {
     required: ['eventTypes', 'url'],
-    allowed: ['alertContacts', 'description', 'eventTypes', 'schemaVersion', 'url'],
+    allowed: [
+      'alertContacts',
+      'description',
+      'eventTypes',
+      'schemaVersion',
+      'url',
+      'verifiedIdentityOnly',
+    ],
     loose: false,
     strict: false,
     types: {
@@ -895,6 +1142,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       eventTypes: 'array',
       schemaVersion: 'string',
       url: 'string',
+      verifiedIdentityOnly: 'boolean',
     },
     enums: {
       schemaVersion: [
@@ -964,6 +1212,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       ],
     },
     strings: { description: { max: 280 } },
+    nestedEnums: {},
     arms: [],
   },
   'PUT /v1/ai/tone': {
@@ -975,6 +1224,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: {},
     itemEnums: {},
     strings: {},
+    nestedEnums: {},
     arms: [],
   },
   'PUT /v1/email-templates/{}': {
@@ -986,6 +1236,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
     enums: {},
     itemEnums: {},
     strings: { body: { min: 1, max: 10000 }, subject: { min: 1, max: 300 } },
+    nestedEnums: {},
     arms: [],
   },
   'PUT /v1/privacy/partners/{}': {
@@ -1001,6 +1252,7 @@ export const ROUTE_FIELD_RULES: Readonly<Record<string, RouteFieldRules>> = {
       completionSecret: { pattern: '^whsec_[A-Za-z0-9+/_=-]{16,256}$' },
       completionsUrl: { max: 2048 },
     },
+    nestedEnums: {},
     arms: [],
   },
 };

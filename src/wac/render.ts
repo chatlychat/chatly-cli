@@ -217,7 +217,7 @@ export function planFooter(plan: Plan, opts: RenderOptions): string {
       `${String(plan.refused.length)} document(s) will be REFUSED by the server as written ` +
         `(${plan.refused.join(', ')}). The warnings above say why. \`apply\` will still try ` +
         'them — the server decides, not this CLI — so expect it to fail until they are fixed. ' +
-        '`--exit-code` answers 3 for this.',
+        '`plan` exits 3 for this.',
     );
   }
   return `${lines.join('\n')}\n`;

@@ -147,6 +147,60 @@ describe('what a pipeline reads from plan', () => {
   });
 
   /*
+   * CH-16's done-when, rechecked by FormFlow on 2026-11-13: "`chatly plan`
+   * rejects `tokenProvider: "atlsa"` with exit code 3". The warning and the
+   * `refused` list were right, and the EXIT CODE was 0 without `--exit-code`
+   * — so the gate they run plan as reported success over a document the API
+   * answers 400 for. A refusal is not drift, and a gate that has to be opted
+   * into is a gate that was off on the day it mattered (the same argument
+   * CH-05's `unhealthy` already won).
+   */
+  it('plan answers 3 for a refused document with no --exit-code at all', async () => {
+    const typo = {
+      version: 1,
+      resources: {
+        channels: [
+          {
+            key: 'web',
+            type: 'web',
+            name: 'Web',
+            config: { identityVerification: { mode: 'oidc', tokenProvider: 'atlsa' } },
+          },
+        ],
+      },
+    };
+    expect(
+      await run(
+        ['plan', '--file', file(typo, 'typo.json'), '--key', 'ck_t'],
+        factoryFor(reads, []),
+      ),
+    ).toBe(3);
+    expect(out.join('')).toContain('will be REFUSED by the server as written');
+  });
+
+  it('plan answers 0 on the same document with a provider that exists', async () => {
+    const good = {
+      version: 1,
+      resources: {
+        channels: [
+          {
+            key: 'web',
+            type: 'web',
+            name: 'Web',
+            config: { identityVerification: { mode: 'oidc', tokenProvider: 'atlas' } },
+          },
+        ],
+      },
+    };
+    expect(
+      await run(
+        ['plan', '--file', file(good, 'good.json'), '--key', 'ck_t'],
+        factoryFor(reads, []),
+      ),
+    ).toBe(0);
+  });
+
+  /*
    * The keys go in their OWN list, not into `refused`. Two count sites add or
    * subtract the two on the premise that a row is never in both, so merging
    * them — which is what the report asked for — would have mis-stated every

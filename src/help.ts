@@ -191,6 +191,9 @@ WORKSPACE AS CODE
                                               value the document holds -- Atlas mints that
                                               secret, so nothing here generates one
                               --exit-code     plan only: 2 = drift, 3 = will not apply
+                              3 needs no --exit-code: a document the server will
+                              refuse, and a resource that matches the file and is
+                              broken, both answer 3 on a bare 'chatly plan'.
                               3 predicts the refusals a route DECLARES: a required
                               field left out, a wrong JSON type, a value outside an
                               enum, a secret a URL needs, a row this CLI will not

@@ -49,12 +49,7 @@ import { execute } from '../wac/execute.js';
 import { loadFrom } from '../wac/load.js';
 import { planFooter, planForJson, renderPlan } from '../wac/render.js';
 import { naturalKeys, resourceDef } from '../wac/resources.js';
-import {
-  missingScopes,
-  scopesFor,
-  SCOPED_COMMANDS,
-  type ScopedCommand,
-} from '../wac/scopes.js';
+import { missingScopes, scopesFor, SCOPED_COMMANDS, type ScopedCommand } from '../wac/scopes.js';
 
 import type { ResourceDef } from '../wac/resource-def.js';
 import type { ChatlyClient, Page } from '@chatlychat/sdk-node';
@@ -264,17 +259,23 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
    * is how a drift alarm becomes a flake alarm.
    */
   /*
-   * 3 for a resource that matches the file and is BROKEN (CH-05), answered
-   * whether or not `--exit-code` was passed.
+   * 3 for a resource that matches the file and is BROKEN (CH-05), and 3 for a
+   * document the server will REFUSE (CH-16) — both answered whether or not
+   * `--exit-code` was passed.
    *
    * Every other non-zero code here is opt-in because `chatly plan` has to be
-   * safe to run under `set -e` just to look at a diff. This one is not drift
-   * and not a prediction — it is the server reporting that a documentation
-   * source has failed its last sync — and FormFlow runs `plan` as a deploy
-   * gate precisely so that a broken knowledge base stops a deploy. A gate
-   * that has to be opted into is a gate that was off on the day it mattered.
+   * safe to run under `set -e` just to look at a diff. Neither of these is
+   * drift. One is the server reporting that a documentation source has failed
+   * its last sync; the other is a value this file states that the route's own
+   * schema does not admit — `tokenProvider: "atlsa"`, which planned as a clean
+   * change and exited 0 while `apply` answered 400. FormFlow runs `plan` as a
+   * deploy gate precisely so that neither reaches production, and a gate that
+   * has to be opted into is a gate that was off on the day it mattered.
+   *
+   * A BLOCKED row is deliberately NOT here: `--exit-code` answers 3 for it and
+   * the default answers 1, which is what it has always done.
    */
-  if (built.unhealthy.length > 0) {
+  if (built.unhealthy.length > 0 || built.refused.length > 0) {
     return 3;
   }
 
@@ -295,7 +296,7 @@ export async function plan(chatly: ChatlyClient, args: ParsedArgs): Promise<numb
      * Reported 2026-11-06, and it is the fifth report's item 3 surviving in
      * the one case that report did not cover.
      */
-    if (built.refused.length > 0 || counts.blocked > 0) {
+    if (counts.blocked > 0) {
       return 3;
     }
     return counts.create + counts.update > 0 ? 2 : 0;
@@ -465,7 +466,6 @@ export async function apply(chatly: ChatlyClient, args: ParsedArgs): Promise<num
 /** Re-exported: it moved to `wac/execute.ts` so `chatly platform apply` shares it. */
 export { execute } from '../wac/execute.js';
 
-
 /* ── whoami --for ─────────────────────────────────────────────────────── */
 
 /**
@@ -488,9 +488,7 @@ export { execute } from '../wac/execute.js';
 export async function whoamiFor(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const asked = str(args.flags, 'for') ?? 'all';
   if (!(SCOPED_COMMANDS as ReadonlyArray<string>).includes(asked)) {
-    process.stderr.write(
-      `--for takes one of ${SCOPED_COMMANDS.join(', ')} (got "${asked}").\n`,
-    );
+    process.stderr.write(`--for takes one of ${SCOPED_COMMANDS.join(', ')} (got "${asked}").\n`);
     return 2;
   }
   const wanted: ReadonlyArray<ScopedCommand> =
@@ -519,7 +517,9 @@ export async function whoamiFor(chatly: ChatlyClient, args: ParsedArgs): Promise
     scopes?: unknown;
     expiresAt?: unknown;
   }>('GET', '/v1/api-keys/whoami');
-  const held = Array.isArray(me.scopes) ? me.scopes.filter((s): s is string => typeof s === 'string') : [];
+  const held = Array.isArray(me.scopes)
+    ? me.scopes.filter((s): s is string => typeof s === 'string')
+    : [];
 
   const report = wanted.map((command) => {
     const needed = scopesFor(command, command === 'doctor' ? undefined : doc);
@@ -563,7 +563,7 @@ export async function whoamiFor(chatly: ChatlyClient, args: ParsedArgs): Promise
   if (short.length > 0) {
     process.stdout.write(
       '\nAdd them in the dashboard under Workspace → Integrations → Developer → API keys, ' +
-      'or mint a replacement with ' +
+        'or mint a replacement with ' +
         '`chatly api-keys create`. `chatly workspace key-scopes` lists every scope there is.\n',
     );
   }

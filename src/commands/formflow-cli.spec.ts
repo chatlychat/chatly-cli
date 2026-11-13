@@ -49,12 +49,7 @@ const CHANNEL = {
     snippet: '<script>…</script>',
     scriptOrigin: 'https://widget.chatlychat.com',
     contentSecurityPolicy: {
-      scriptSrc: [
-        "'self'",
-        'https://widget.chatlychat.com',
-        "'sha256-AAA='",
-        "'sha256-BBB='",
-      ],
+      scriptSrc: ["'self'", 'https://widget.chatlychat.com', "'sha256-AAA='", "'sha256-BBB='"],
       connectSrc: ['https://api.chatlychat.com', 'wss://rt.chatlychat.com'],
       imgSrc: ['https://files.chatlychat.com', 'data:'],
       mediaSrc: ['https://files.chatlychat.com'],
@@ -178,9 +173,7 @@ describe('the FormFlow CLI items, end to end', () => {
   /* ── CH-17: whoami --for ──────────────────────────────────────────────── */
 
   const whoami = (scopes: string[], extra: Record<string, unknown> = {}): Record<string, unknown> =>
-    Object.fromEntries([
-      ['/v1/api-keys/whoami', { workspaceId: 'ws_1', scopes, ...extra }],
-    ]);
+    Object.fromEntries([['/v1/api-keys/whoami', { workspaceId: 'ws_1', scopes, ...extra }]]);
 
   it('names the EXACT missing scope for apply and exits 1', async () => {
     const seen: Seen[] = [];
@@ -303,6 +296,14 @@ describe('the FormFlow CLI items, end to end', () => {
     expect(text).toContain('export const chatlyCsp');
     expect(text).toContain('export function withChatly');
     expect(text).toContain("'script-src': [\"'self'\"");
+    /*
+     * FormFlow's 2026-11-13 recheck: "`chatly init next` writes
+     * `chatly.csp.mjs` once, with no refresh command". The file itself said
+     * "Re-run `chatly init`", and init never overwrites what it wrote — so
+     * the generated comment pointed at the dead end the report describes.
+     */
+    expect(text).toContain('chatly csp --format next > chatly.csp.mjs');
+    expect(text).not.toContain('Re-run `chatly init`');
   });
 
   it('tells a react install it needs no nonce, rather than telling it to find one', async () => {
@@ -311,9 +312,9 @@ describe('the FormFlow CLI items, end to end', () => {
   });
 
   it('refuses an unknown --format instead of silently defaulting', async () => {
-    expect(
-      await run(['csp', '--format', 'yaml', '--key', 'ck_t'], factoryFor(channels, [])),
-    ).toBe(2);
+    expect(await run(['csp', '--format', 'yaml', '--key', 'ck_t'], factoryFor(channels, []))).toBe(
+      2,
+    );
     expect(err.join('')).toContain('Unknown --format');
   });
 });

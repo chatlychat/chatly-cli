@@ -59,17 +59,17 @@ export const unavailable = (why: string): DoctorCheck => ({
   fix: 'Check the key holds workspace:read and the API is current.',
 });
 
-
-
 /**
  * Every check `GET /v1/integration-health` computes, as doctor rows (CH-05).
  *
  * ── Why these are not re-derived here ─────────────────────────────────────
  *
  * They already exist, server-side, with a `detail` and a `fix` apiece:
- * `kb.sync`, `kb.semantic_index`, `business_hours.set`, `channel.origins`,
- * `identity.mode`, `webhooks.healthy`, `attachments.hosts_current` and
- * `identity.jwks_reachable`. `doctor` read exactly ONE of them — the JWKS
+ * `kb.sync`, `kb.semantic_index`, `kb.orphans`, `business_hours.set`,
+ * `channel.origins`, `identity.mode`, `webhooks.healthy`,
+ * `attachments.hosts_current`, `identity.jwks_reachable` and
+ * `atlas.receiver`. The list is prose and the mapping below is not — a check
+ * the server adds flows through without an edit here. `doctor` read exactly ONE of them — the JWKS
  * verdict, and only when a channel had identity verification on — so FormFlow
  * ran it as a deploy gate, got `12 check(s): 12 ok, 0 warning(s), 0 failed`,
  * and shipped with two of three knowledge sources dead and the bot answering
