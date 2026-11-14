@@ -1,5 +1,27 @@
 # @chatlychat/cli — changelog
 
+## 0.14.0 — 2026-11-14
+
+- **`chatly.yaml` can set a brand's `fromEmail` and `replyTo`** (CH-21).
+  Chatly-originated mail — key-expiry warnings, status subscriptions,
+  transcripts — has always gone out as `supportEmail` in both `From:` and
+  `Reply-To:`, one field driving two headers, so a workspace could not send
+  from a proven address with replies going somewhere else. Both fields are
+  declarative on the existing `brands` resource, so `plan` and `apply` need
+  nothing new.
+
+  **`fromEmail` is refused unless its domain is already verified on the
+  workspace** — a `kind: "email"` row at `verified`, the same check the send
+  path makes rather than a second copy of the rule — and the refusal names
+  `POST /v1/domains`. An unverified sender in `From:` fails SPF and DMARC at
+  the recipient, so the mail is junked; stored-and-ignored would be worse,
+  because every field you read back would say the sender was set. `replyTo`
+  is deliberately NOT gated: alignment is computed against `From:` and the
+  envelope sender, so `Reply-To:` cannot carry another domain's authenticated
+  identity.
+
+  A brand with neither field set behaves exactly as before, byte for byte.
+
 ## 0.13.0 — 2026-11-13
 
 - **`chatly init next` and `init remix` write the CSP variant they actually
