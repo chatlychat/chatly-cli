@@ -247,12 +247,21 @@ INSTALL
                                                 hashes, which a widget-react or
                                                 <chatly-widget> install does not use.
                                                 Without it they are kept, as the API
-                                                sends them
+                                                sends them. This is the variant
+                                                init next and init remix write, so
+                                                it is the refresh command for
+                                                those two — with it, the file is
+                                                byte-identical to theirs
                               --public-id <id>  which web channel (needed if several)
   init next|remix|astro|express
                               Scaffold the widget into this project for a web channel:
                               identity route, launcher or snippet, CSP sources
-                              (chatly.csp.mjs) and a privacy table. Never overwrites
+                              (chatly.csp.mjs) and a privacy table. Never overwrites.
+                              The CSP matches the install it writes: next and remix
+                              scaffold <ChatlyLauncher>, so theirs carries no
+                              snippet hashes; astro and express paste the snippet,
+                              so theirs does. The file prints its own refresh
+                              command — run that, not init, to update it
                               --public-id <id>   which web channel (needed if several)
                               --identity hmac|atlas   default hmac (atlas: next, remix)
                               --dir <path>   default .   --dry-run   --force

@@ -7,9 +7,21 @@
  * command people run before a cutover, and an integrator who found a missing
  * privacy-partner connection from the partner's own health check should have
  * found it from this. Kept out of `doctor-checks.ts`, which is near the file
- * size cap; type-only imports, like it.
+ * size cap.
+ *
+ * One value import, and it is deliberate: `doctor-token-audience.ts` is pure
+ * string work whose own only import is type-only, so it costs this file no
+ * module graph. Everything else here stays type-only, like `doctor-checks.ts`.
  */
-import type { ChannelView, DoctorCheck, DoctorDeps, Verdict } from './doctor-checks.js';
+import { tokenContractChecks } from './doctor-token-audience.js';
+
+import type {
+  ChannelView,
+  DoctorCheck,
+  DoctorDeps,
+  DoctorOptions,
+  Verdict,
+} from './doctor-checks.js';
 
 /** A JSON object, or an empty one. Local, so this file still imports nothing. */
 const rec = (value: unknown): Record<string, unknown> =>
@@ -182,15 +194,16 @@ const CONTRACT_WARN_ONLY = new Set(['audience_derived']);
 export async function identityContractChecks(
   ch: ChannelView,
   deps: DoctorDeps,
+  opts: DoctorOptions,
 ): Promise<DoctorCheck[]> {
   const channelId = ch.id;
   if (rec(ch.config['identityVerification'])['enabled'] !== true || channelId === null) {
     return [];
   }
   const name = `identity.contract (${ch.label})`;
-  let entries: readonly unknown[];
+  let body: Record<string, unknown>;
   try {
-    entries = await deps.identityContract(channelId);
+    body = rec(await deps.identityContract(channelId));
   } catch (err) {
     return [
       {
@@ -204,29 +217,44 @@ export async function identityContractChecks(
       },
     ];
   }
-  if (entries.length === 0) {
-    return [
-      {
-        name,
-        verdict: 'skip',
-        detail: 'The identity contract carried no checks, so there is nothing to report.',
-        fix: null,
-      },
-    ];
-  }
-  return entries.map((entry): DoctorCheck => {
-    const e = rec(entry);
-    const id = text(e['id']) ?? 'unknown';
-    const ok = e['ok'] === true;
-    return {
-      name: `identity.${id} (${ch.label})`,
-      verdict: ok ? 'pass' : CONTRACT_WARN_ONLY.has(id) ? 'warn' : 'fail',
-      // The server's own sentence: a second wording here is a second source
-      // of truth about a verdict this CLI did not compute.
-      detail: text(e['detail']) ?? (ok ? 'ok' : 'failed'),
-      fix: ok
-        ? null
-        : `Read the whole contract with \`chatly api GET /v1/channels/${channelId}/identity-contract\` — it carries the exact \`aud\`, issuer and claim names your token template must stamp.`,
-    };
-  });
+  const entries: readonly unknown[] = Array.isArray(body['checks']) ? body['checks'] : [];
+  /*
+   * A body with no `checks` is still a body: `audience` and `issuers` are
+   * there, so a supplied token is still compared and the token rows are
+   * appended below. An early return here would have made the one check the
+   * operator explicitly asked for disappear on any deployment whose contract
+   * grades nothing.
+   */
+  const graded: DoctorCheck[] =
+    entries.length === 0
+      ? [
+          {
+            name,
+            verdict: 'skip',
+            detail: 'The identity contract carried no checks, so there is nothing to report.',
+            fix: null,
+          },
+        ]
+      : entries.map((entry): DoctorCheck => {
+          const e = rec(entry);
+          const id = text(e['id']) ?? 'unknown';
+          const ok = e['ok'] === true;
+          return {
+            name: `identity.${id} (${ch.label})`,
+            verdict: ok ? 'pass' : CONTRACT_WARN_ONLY.has(id) ? 'warn' : 'fail',
+            // The server's own sentence: a second wording here is a second
+            // source of truth about a verdict this CLI did not compute.
+            detail: text(e['detail']) ?? (ok ? 'ok' : 'failed'),
+            fix: ok
+              ? null
+              : `Read the whole contract with \`chatly api GET /v1/channels/${channelId}/identity-contract\` — it carries the exact \`aud\`, issuer and claim names your token template must stamp.`,
+          };
+        });
+  /*
+   * The contract's own verdicts grade the channel against itself. A token the
+   * operator supplies is the only thing here that has seen the identity
+   * provider's OUTPUT, so it is compared against the same body (CH-09) — and
+   * with no token there are no rows at all.
+   */
+  return [...graded, ...tokenContractChecks(body, opts.visitorToken, ch.label)];
 }

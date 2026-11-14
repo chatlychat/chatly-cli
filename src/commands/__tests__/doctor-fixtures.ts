@@ -15,12 +15,7 @@
  * directory is where this package already keeps its fixtures
  * (`wac/__tests__/wac-fixtures.ts`).
  */
-import {
-  runChecks,
-  selectChannels,
-  type DoctorCheck,
-  type DoctorDeps,
-} from '../doctor-checks.js';
+import { runChecks, selectChannels, type DoctorCheck, type DoctorDeps } from '../doctor-checks.js';
 
 export interface Sent {
   readonly url: string;
@@ -117,7 +112,7 @@ export function depsFor(
     },
     // Empty rather than a pass: a stub that answers `ok: true` for checks a
     // test never named is a stub the code agrees with whatever it does.
-    identityContract: async () => [],
+    identityContract: async () => ({}),
     ...over,
     get healthCalls(): number {
       return state.healthCalls;

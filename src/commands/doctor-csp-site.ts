@@ -27,7 +27,11 @@
  *     spec would narrow it to the document's own scheme;
  *   * a source with no port matches any port, where the spec would narrow it
  *     to the scheme's default;
- *   * a path on a source is ignored and the host alone is compared.
+ *   * a path on a source is ignored and the host alone is compared;
+ *   * a `script-src` carrying `'strict-dynamic'` is not checked for hosts at
+ *     all, because the browser ignores them there — see `ignoresHosts`. This
+ *     one is not a simplification but the spec, and it was the one false
+ *     FAILURE this check still had.
  *
  * What is NOT simplified is the part that would produce a wrong verdict in
  * the direction that matters: `default-src` fallback (a site that names no
@@ -207,6 +211,39 @@ function hostAdmits(rest: string, host: string): boolean {
 }
 
 /**
+ * Does this directive's source list make the browser ignore host sources?
+ *
+ * `'strict-dynamic'` does, for SCRIPTS only: the browser drops every host
+ * expression and `'self'` from the effective `script-src` and trusts nonced
+ * or hashed scripts plus anything they insert. So a widget host missing from
+ * such a policy is not a problem, and telling the integrator to add it is
+ * advice that cannot work — which is what this check used to do, in the one
+ * direction the header above forbids. The widget's own `script-src` host is
+ * reached through the nonce chain instead (`window.Chatly.nonce` → the loader
+ * → `widget.js` → each deferred chunk).
+ *
+ * **`script-src` only, and deliberately not generalised.** The keyword has no
+ * effect on `connect-src`, `img-src` or `media-src`; absolving those would
+ * blind the half of this check that found a real integrator's missing upload
+ * host on 2026-11-03, which is the reason the whole file exists. A
+ * `default-src 'self' 'strict-dynamic'` therefore still reports every missing
+ * connect, image and media host, and only stops reporting script hosts.
+ *
+ * It reads the `default-src` FALLBACK, because `effective` already is the
+ * fallback where `script-src` is absent, and that is the browser's own
+ * behaviour: a script governed by a `default-src` carrying the keyword has its
+ * host sources ignored exactly as it would in `script-src`. Narrowing this to
+ * a literal `script-src` would have reinstated the false failure on the one
+ * policy shape where it is hardest to debug.
+ */
+function ignoresHosts(directive: string, effective: readonly string[]): boolean {
+  return (
+    directive === 'script-src' &&
+    effective.some((s) => s.trim().toLowerCase() === "'strict-dynamic'")
+  );
+}
+
+/**
  * Which published hosts no policy on the page admits.
  *
  * `undefined` sources for a directive means the page does not restrict it at
@@ -235,9 +272,10 @@ export function missingFromPolicies(input: {
       }
       const blocked = input.policies.some((policy) => {
         const effective = policy.get(directive) ?? policy.get('default-src');
-        return (
-          effective !== undefined && !effective.some((s) => sourceAdmits(s, raw, input.siteOrigin))
-        );
+        if (effective === undefined || ignoresHosts(directive, effective)) {
+          return false;
+        }
+        return !effective.some((s) => sourceAdmits(s, raw, input.siteOrigin));
       });
       if (blocked) {
         missing.push({ directive, source: raw });
@@ -306,9 +344,29 @@ export async function siteCspVerdict(input: {
         'named beside it, alongside whatever is already there.',
     };
   }
+  /*
+   * The honest cost of the `'strict-dynamic'` carve-out, said out loud.
+   *
+   * Under that keyword this check can no longer tell a working policy from
+   * one whose nonce never reaches the widget, and it never could: the widget
+   * is not in the HTML we fetched, so nothing here can see whether the
+   * launcher got a nonce. What it CAN do is name the one thing left to
+   * verify, instead of reporting a bare pass that reads as "the policy is
+   * fine" on a page where the widget may not load at all.
+   */
+  const strictDynamic = policies.some((policy) =>
+    ignoresHosts('script-src', policy.get('script-src') ?? policy.get('default-src') ?? []),
+  );
   return {
     verdict: 'pass',
-    detail: `${input.origin}’s Content-Security-Policy (${String(policies.length)} policy/policies) admits every host this channel publishes.`,
+    detail:
+      `${input.origin}’s Content-Security-Policy (${String(policies.length)} policy/policies) admits every host this channel publishes.` +
+      (strictDynamic
+        ? " Its script-src carries `'strict-dynamic'`, so host sources there are ignored by the" +
+          ' browser and this check does not compare them: the widget reaches its loader through' +
+          ' the nonce instead. That half cannot be verified from outside — confirm the launcher' +
+          ' is given the response’s nonce.'
+        : ''),
     fix: null,
   };
 }

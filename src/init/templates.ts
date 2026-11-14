@@ -349,7 +349,19 @@ const snippet = ${JSON.stringify(input.embed.snippet)};
 
 /** Every file `chatly init <framework>` writes, in the order it reports them. */
 export function scaffold(framework: Framework, input: ScaffoldInput): ReadonlyArray<ScaffoldFile> {
-  const common = [cspModule(input), privacyTable(input)];
+  /*
+   * The CSP variant follows the install this scaffold WRITES, and it used not
+   * to (CH-13). `next` and `remix` get `<ChatlyLauncher>` from
+   * `@chatlychat/widget-react`, which creates a `<script src>` and runs no
+   * inline script — yet the module beside it carried the inline snippet's
+   * `'sha256-…'` sources and a comment telling the reader to find a nonce or
+   * a hash for an inline script this scaffold never emits. The integrator who
+   * reported CH-13 had run `chatly init next` and ended on
+   * `'unsafe-inline'`. `astro` and `express` do paste the snippet, so they
+   * keep the hashes, where omitting them would block the widget outright.
+   */
+  const install = framework === 'next' || framework === 'remix' ? 'react' : 'snippet';
+  const common = [cspModule({ ...input, install }), privacyTable(input)];
   if (framework === 'next') {
     return [
       ...(input.identity === 'hmac'

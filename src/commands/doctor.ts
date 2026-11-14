@@ -15,6 +15,7 @@ import { itemsOf, printJson } from '../output.js';
 import { atlasReceiverChecks } from './doctor-atlas-receiver.js';
 import { exitCodeFor, runChecks, selectChannels, type DoctorCheck } from './doctor-checks.js';
 import { readinessChecks, unavailable } from './doctor-readiness.js';
+import { VISITOR_TOKEN_ENV } from './doctor-token-audience.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
 
@@ -37,8 +38,7 @@ const symbolFor = (verdict: DoctorCheck['verdict']): string =>
  * the word. See `Verdict` in `doctor-checks.ts`.
  */
 export function summaryLine(checks: readonly DoctorCheck[]): string {
-  const count = (v: DoctorCheck['verdict']): number =>
-    checks.filter((c) => c.verdict === v).length;
+  const count = (v: DoctorCheck['verdict']): number => checks.filter((c) => c.verdict === v).length;
   const [failed, warned, skipped] = [count('fail'), count('warn'), count('skip')];
   return (
     `${String(checks.length)} check(s): ${String(checks.length - failed - warned - skipped)} ok, ` +
@@ -49,6 +49,14 @@ export function summaryLine(checks: readonly DoctorCheck[]): string {
 export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const only = str(args.flags, 'channel');
   const origin = str(args.flags, 'origin');
+  /*
+   * One real minted visitor token (CH-09). `--token`, or the environment,
+   * which is where a credential belongs in CI — the same pair
+   * `channels verify-events-secret` offers for the events secret. It is
+   * compared with each channel's identity contract and is never sent
+   * anywhere: see `doctor-token-audience.ts`.
+   */
+  const visitorToken = str(args.flags, 'token') ?? process.env[VISITOR_TOKEN_ENV];
 
   /*
    * No `?limit=`, so this answers a bare array — but `itemsOf` accepts the
@@ -79,7 +87,7 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
 
   const checks = await runChecks(
     channels,
-    { origin },
+    { origin, visitorToken },
     {
       fetchFn: fetch,
       presign: async () => {
@@ -101,13 +109,13 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
         const graded = res['checks'];
         return Array.isArray(graded) ? (graded as readonly unknown[]) : [];
       },
-      identityContract: async (channelId: string) => {
-        const res = await chatly.request<{ checks?: unknown }>(
+      // The whole body: `checks` is graded, and `audience`/`issuers` are what
+      // a supplied token is compared against (CH-09).
+      identityContract: async (channelId: string) =>
+        chatly.request<Record<string, unknown>>(
           'GET',
           `/v1/channels/${encodeURIComponent(channelId)}/identity-contract`,
-        );
-        return Array.isArray(res.checks) ? (res.checks as readonly unknown[]) : [];
-      },
+        ),
     },
   );
 

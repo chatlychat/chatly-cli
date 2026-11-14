@@ -48,12 +48,24 @@ describe('the checks the server computes (integration-health)', () => {
     const sent: Sent[] = [];
     const deps = depsFor(stubFetch(HEALTHY, sent), {
       health: async () => [
-        { id: 'kb.sync', ok: false, detail: '2 of 3 knowledge source(s) failed', fix: 'Reconnect.' },
-        { id: 'kb.semantic_index', ok: false, detail: '32 published article(s)', fix: 'Set a key.' },
+        {
+          id: 'kb.sync',
+          ok: false,
+          detail: '2 of 3 knowledge source(s) failed',
+          fix: 'Reconnect.',
+        },
+        {
+          id: 'kb.semantic_index',
+          ok: false,
+          detail: '32 published article(s)',
+          fix: 'Set a key.',
+        },
       ],
     });
     const all = await runChecks(selectChannels([idv(false)], undefined), {}, deps);
-    expect(all.map((c) => c.name)).toEqual(expect.arrayContaining(['kb.sync', 'kb.semantic_index']));
+    expect(all.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['kb.sync', 'kb.semantic_index']),
+    );
     expect(pick(all, 'kb.sync').verdict).toBe('fail');
     expect(pick(all, 'kb.semantic_index').verdict).toBe('fail');
     // The acceptance criterion, in one line: a workspace in this state fails.
@@ -61,11 +73,22 @@ describe('the checks the server computes (integration-health)', () => {
   });
 
   it('warns rather than failing on business hours, which is a supported configuration', async () => {
-    const { check: c, all } = await check('business_hours.set', [channelRow()], HEALTHY, {}, {
-      health: async () => [
-        { id: 'business_hours.set', ok: false, detail: 'No business hours are set.', fix: 'Set them.' },
-      ],
-    });
+    const { check: c, all } = await check(
+      'business_hours.set',
+      [channelRow()],
+      HEALTHY,
+      {},
+      {
+        health: async () => [
+          {
+            id: 'business_hours.set',
+            ok: false,
+            detail: 'No business hours are set.',
+            fix: 'Set them.',
+          },
+        ],
+      },
+    );
     expect(c.verdict).toBe('warn');
     // A warning alone must not stop a deploy, or the gate gets switched off.
     expect(exitCodeFor(all)).toBe(0);
@@ -117,9 +140,15 @@ describe('the checks the server computes (integration-health)', () => {
   });
 
   it('marks an unreadable ok SKIPPED too — an absent verdict is not a pass', async () => {
-    const { check: c } = await check('kb.sync', [channelRow()], HEALTHY, {}, {
-      health: async () => [{ id: 'kb.sync', detail: 'who knows', fix: null }],
-    });
+    const { check: c } = await check(
+      'kb.sync',
+      [channelRow()],
+      HEALTHY,
+      {},
+      {
+        health: async () => [{ id: 'kb.sync', detail: 'who knows', fix: null }],
+      },
+    );
     expect(c.verdict).toBe('skip');
   });
 
@@ -166,9 +195,13 @@ describe('channel selection and the exit code', () => {
    * see a web channel was getting no verdict on any of them.
    */
   it('still reports the server’s checks when there is no web channel to check', async () => {
-    const all = await runChecks([], {}, depsFor(stubFetch({}, []), {
-      health: async () => [{ id: 'kb.sync', ok: false, detail: 'two failed', fix: 'Reconnect.' }],
-    }));
+    const all = await runChecks(
+      [],
+      {},
+      depsFor(stubFetch({}, []), {
+        health: async () => [{ id: 'kb.sync', ok: false, detail: 'two failed', fix: 'Reconnect.' }],
+      }),
+    );
     expect(all.map((c) => c.name)).toEqual(['channels', 'kb.sync']);
     expect(exitCodeFor(all)).toBe(1);
   });
@@ -211,7 +244,10 @@ describe('the summary line, which is the number people act on', () => {
 describe('the identity contract (CH-09)', () => {
   const idvOn = (over: Record<string, unknown> = {}): Record<string, unknown> =>
     channelRow({
-      config: { allowedOrigins: ['https://example.com'], identityVerification: { enabled: true, ...over } },
+      config: {
+        allowedOrigins: ['https://example.com'],
+        identityVerification: { enabled: true, ...over },
+      },
     });
 
   /*
@@ -221,16 +257,25 @@ describe('the identity contract (CH-09)', () => {
    * see, because a refused token looks like a visitor who never signed in.
    */
   it('FAILS on audience_matches_channel, which is the re-created-channel trap', async () => {
-    const { check: c, all } = await check('identity.audience_matches_channel', [idvOn()], HEALTHY, {}, {
-      identityContract: async () => [
-        { id: 'audience_derived', ok: true, detail: 'derived.' },
-        {
-          id: 'audience_matches_channel',
-          ok: false,
-          detail: 'The channel\'s `audience` is ["chatly:web_live_old"] and names no `chatly:web_live_1`.',
-        },
-      ],
-    });
+    const { check: c, all } = await check(
+      'identity.audience_matches_channel',
+      [idvOn()],
+      HEALTHY,
+      {},
+      {
+        identityContract: async () => ({
+          checks: [
+            { id: 'audience_derived', ok: true, detail: 'derived.' },
+            {
+              id: 'audience_matches_channel',
+              ok: false,
+              detail:
+                'The channel\'s `audience` is ["chatly:web_live_old"] and names no `chatly:web_live_1`.',
+            },
+          ],
+        }),
+      },
+    );
     expect(c.verdict).toBe('fail');
     expect(c.detail).toContain('web_live_old');
     expect(exitCodeFor(all)).toBe(1);
@@ -243,11 +288,17 @@ describe('the identity contract (CH-09)', () => {
    * have to switch off is a check that is off on the day it mattered.
    */
   it('only WARNS on audience_derived, because a hand-written issuer is supported', async () => {
-    const { check: c, all } = await check('identity.audience_derived', [idvOn()], HEALTHY, {}, {
-      identityContract: async () => [
-        { id: 'audience_derived', ok: false, detail: '`audience` is written by hand.' },
-      ],
-    });
+    const { check: c, all } = await check(
+      'identity.audience_derived',
+      [idvOn()],
+      HEALTHY,
+      {},
+      {
+        identityContract: async () => ({
+          checks: [{ id: 'audience_derived', ok: false, detail: '`audience` is written by hand.' }],
+        }),
+      },
+    );
     expect(c.verdict).toBe('warn');
     expect(exitCodeFor(all)).toBe(0);
   });
@@ -266,7 +317,7 @@ describe('the identity contract (CH-09)', () => {
       depsFor(stubFetch(HEALTHY, []), {
         identityContract: async () => {
           asked += 1;
-          return [];
+          return {};
         },
       }),
     );
@@ -275,9 +326,15 @@ describe('the identity contract (CH-09)', () => {
   });
 
   it('SKIPS when the contract cannot be read, and never reports it as ok', async () => {
-    const { check: c, all } = await check('identity.contract', [idvOn()], HEALTHY, {}, {
-      identityContract: () => Promise.reject(new Error('Missing permission: channels:read')),
-    });
+    const { check: c, all } = await check(
+      'identity.contract',
+      [idvOn()],
+      HEALTHY,
+      {},
+      {
+        identityContract: () => Promise.reject(new Error('Missing permission: channels:read')),
+      },
+    );
     expect(c.verdict).toBe('skip');
     expect(c.fix).toContain('channels:read');
     expect(exitCodeFor(all)).toBe(0);

@@ -93,11 +93,43 @@ export interface ScaffoldInput {
    * `<chatly-widget>` install, which loads the loader from a `<script src>`
    * and runs no inline script at all — so those hashes match nothing, and a
    * reader seeing them in `script-src` concludes they need `'unsafe-inline'`
-   * and weakens their policy for a script that does not exist. The filtering
-   * is `chatly csp`'s; this only changes what the generated comment says, so
-   * the file does not tell a React integrator to find a nonce.
+   * and weakens their policy for a script that does not exist.
+   *
+   * This filters the lists AND changes the refresh command the file prints,
+   * and the second half is the one that was wrong: the header said
+   * `chatly csp --format next > chatly.csp.mjs` whatever the variant, and
+   * `--format next` defaults to `--install snippet` — so the documented
+   * refresh of a react file put the hashes straight back.
    */
   readonly install?: 'snippet' | 'react';
+}
+
+/**
+ * A `'sha256-…'` source, which is a hash of the inline embed snippet.
+ *
+ * Matched on the PREFIX of the quoted token, not by looking for a host that
+ * is not a host: `'nonce-…'` would be the other quoted hash-like source and
+ * the API does not publish one, so a prefix test that names what it removes
+ * is the honest shape. Everything else — `'self'`, `data:`, `blob:` and every
+ * origin — is kept by both variants.
+ */
+const isSnippetHash = (source: string): boolean => source.startsWith("'sha256-");
+
+/**
+ * The published policy with the inline-snippet hashes taken out.
+ *
+ * Exported because `chatly csp --format header|json` needs the same answer as
+ * `--format next`, and two filters would be two answers to one question.
+ */
+export function hostsOnly(
+  csp: EmbedBlock['contentSecurityPolicy'],
+): EmbedBlock['contentSecurityPolicy'] {
+  return {
+    scriptSrc: csp.scriptSrc.filter((s) => !isSnippetHash(s)),
+    connectSrc: csp.connectSrc.filter((s) => !isSnippetHash(s)),
+    imgSrc: csp.imgSrc.filter((s) => !isSnippetHash(s)),
+    mediaSrc: csp.mediaSrc.filter((s) => !isSnippetHash(s)),
+  };
 }
 
 /**
@@ -111,7 +143,11 @@ export interface ScaffoldInput {
  * So it merges into the directives the integrator already has.
  */
 export function cspModule(input: ScaffoldInput): ScaffoldFile {
-  const csp = input.embed.contentSecurityPolicy;
+  const react = input.install === 'react';
+  const csp = react
+    ? hostsOnly(input.embed.contentSecurityPolicy)
+    : input.embed.contentSecurityPolicy;
+  const refresh = `chatly csp${react ? ' --install react' : ' --format next'} > chatly.csp.mjs`;
   const list = (values: ReadonlyArray<string>): string =>
     `[${values.map((v) => JSON.stringify(v)).join(', ')}]`;
   return {
@@ -121,7 +157,7 @@ export function cspModule(input: ScaffoldInput): ScaffoldFile {
  *
  * Generated on ${input.generatedOn} from the channel's own
  * \`embed.contentSecurityPolicy\`. REFRESH it with
- * \`chatly csp --format next > chatly.csp.mjs\` — put that in \`prebuild\` and
+ * \`${refresh}\` — put that in \`prebuild\` and
  * it cannot go stale. \`chatly init\` wrote it the first time and will not
  * overwrite it, so re-running init is not the refresh. The lists are the
  * origins CHATLY serves from, not an image URL an operator put in a theme.
@@ -131,8 +167,8 @@ export function cspModule(input: ScaffoldInput): ScaffoldFile {
  * would block your own scripts rather than allow Chatly's.
  *
  * ${
-   input.install === 'react'
-     ? `This list is for a @chatlychat/widget-react or <chatly-widget> install:\n * the inline-snippet hashes are NOT in it, because that install runs no\n * inline script. You do not need a nonce and you do not need\n * 'unsafe-inline'. If you switch to the embed snippet, regenerate without\n * --install react.`
+   react
+     ? `This list is for a @chatlychat/widget-react or <chatly-widget> install:\n * the inline-snippet hashes are NOT in it, because that install runs no\n * inline script. If a host allowlist is your whole script-src then this\n * list is the whole job: you do not need a nonce and you do not need\n * 'unsafe-inline'. If you switch to the embed snippet, regenerate without\n * --install react.\n *\n * If your script-src carries 'strict-dynamic' — Next's own recommendation —\n * the browser IGNORES every host source in it, including the widget host\n * this module adds. That is not a bug to widen your way out of: the loader\n * is reached through the nonce chain instead (pass \`nonce\` to\n * <ChatlyLauncher>). The host entry is here so the same module is correct\n * for a policy WITHOUT 'strict-dynamic'; adding more hosts to script-src\n * while it is present changes nothing at all.`
      : `The embed snippet is an inline <script>: your script-src needs a nonce or\n * hash for it, or load the widget with @chatlychat/widget-react instead and\n * regenerate with \`chatly csp --install react\`.`
  }
  */

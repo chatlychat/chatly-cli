@@ -1,5 +1,56 @@
 # @chatlychat/cli — changelog
 
+## 0.13.0 — 2026-11-13
+
+- **`chatly init next` and `init remix` write the CSP variant they actually
+  scaffold** (CH-13). Both generate `<ChatlyLauncher>` from
+  `@chatlychat/widget-react` — a package install that runs no inline script —
+  and both wrote `chatly.csp.mjs` with the inline snippet's four
+  `'sha256-…'` sources in `script-src`, plus a comment telling the reader to
+  find a nonce or a hash for an inline script the scaffold never emits. The
+  integrator who reported CH-13 ran `chatly init next` and ended on
+  `'unsafe-inline'`, which re-admits every inline script on their own page.
+  `init astro` and `init express` do paste the snippet, so they keep the
+  hashes — without them a browser refuses the snippet and there is no widget
+  at all.
+
+- **The refresh command the generated file prints now reproduces the file**
+  (CH-13). It read `chatly csp --format next > chatly.csp.mjs` whatever the
+  variant, and `--format next` defaults to `--install snippet` — so the
+  documented refresh of a hash-free module put the hashes back. A build step
+  that silently changes the policy is worse than no build step. A react
+  module now prints `chatly csp --install react > chatly.csp.mjs`.
+
+- **The generated react module says what `'strict-dynamic'` does to it.** Under
+  Next's own recommended `script-src`, the browser ignores every host source —
+  `'self'` and the widget host `withChatly` appends included — and reaches the
+  loader through the nonce chain instead. Without that line the reader debugs a
+  missing widget by adding hosts to `script-src`, which cannot help.
+
+- **`chatly doctor --origin` no longer fails a correct `'strict-dynamic'`
+  policy, and no longer prints advice that cannot work.** `csp.site` compared
+  every published `script-src` host against the page's policy without noticing
+  the keyword — which makes the browser ignore host sources and `'self'` in
+  that directive entirely — so a Next app that had correctly dropped the
+  redundant widget host was told its policy was broken, and told to add the
+  host back. Measured before the fix: that policy returned
+  `[{"directive":"script-src","source":"https://widget.chatlychat.com"}]`. It
+  was the one false FAILURE left in a check whose own header says every
+  simplification errs towards PASS, because a false failure is how a command
+  stops being believed.
+
+  **`script-src` only**, including through a `default-src` fallback, because
+  that is what a browser does. `connect-src`, `img-src` and `media-src` are
+  untouched by the keyword and are still compared — absolving those would
+  blind the half of this check that found a real integrator's missing upload
+  host on 2026-11-03. The pass line now names the half it cannot verify: a
+  nonce that never reaches the widget is a broken page this check cannot see
+  from outside, and a bare `pass` would read as "the policy is fine".
+
+- No behaviour change to `chatly csp`'s flags. `hostsOnly` moved into
+  `init/shared.ts` so the command and the scaffold filter with one function
+  rather than two.
+
 ## 0.12.0 — 2026-11-13
 
 A **minor**, and most of it is the 2026-11-13 FormFlow round, which was

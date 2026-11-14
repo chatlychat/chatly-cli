@@ -11,9 +11,10 @@
  *     there was no command that regenerated it. So a Chatly host change
  *     means an integrator editing a generated file by hand, and a file
  *     nobody regenerates is a file that is wrong the first time anything
- *     moves. This command is the build step: `chatly csp --format next >
- *     chatly.csp.mjs` in `prebuild`, and their `middleware.ts` stays
- *     correct with no edit to their code.
+ *     moves. This command is the build step: `chatly csp --install react >
+ *     chatly.csp.mjs` in `prebuild`, and their `src/proxy.ts` (Next 16; the
+ *     same file is `middleware.ts` on Next 15 and earlier) stays correct
+ *     with no edit to their code.
  *
  *  2. `embed.contentSecurityPolicy.scriptSrc` includes four `'sha256-…'`
  *     hashes, and they are the hashes of the INLINE EMBED SNIPPET. A
@@ -29,23 +30,37 @@
  * MISSING one blocks the snippet outright — so the faithful answer is the
  * safe default and the narrow one is asked for by name.
  *
- * ═══ CROSS-LANE ═══════════════════════════════════════════════════════════
+ * ═══ THE VARIANT THE API ALSO PUBLISHES ══════════════════════════════════
  *
- * The report asked whether the API should publish a hashless `react` variant
- * of the block. It should, probably, and that is not this package's to add:
- * the CLI filters `'sha256-'` out of what the API already returns, which is a
- * complete answer today and costs the API nothing. If the variant lands, this
- * command reads it and the filter becomes dead code to delete.
+ * `embed.contentSecurityPolicy.react` is the same hash-free lists, computed
+ * server-side. This command still FILTERS rather than reading it, on purpose:
+ * `hostsOnly` is one line of set logic and it keeps the CLI working against a
+ * deployment older than that field — a self-host is not upgraded on our
+ * schedule. `channel-embed.spec.ts` pins the server's variant to the same
+ * rule (hashes out of `scriptSrc`, the other three identical), and
+ * `csp.spec.ts` pins this one, so the duplication is two tested copies of one
+ * line rather than two answers. If the field becomes universal, read it and
+ * delete `hostsOnly`.
  *
  * ═══ ONE READ, AND IT IS THE SAME ONE `init` MAKES ════════════════════════
  *
  * `GET /v1/channels`, the same route, through the same `pickChannel`, into the
- * same `cspModule` — so `chatly csp --format next` and the file
- * `chatly init next` wrote are byte-identical for the same channel on the
- * same day. A second renderer here would be a second answer to one question.
+ * same `cspModule`. So the file is byte-identical for the same channel on the
+ * same day — but MIND THE VARIANT: `chatly init next` and `init remix`
+ * scaffold `<ChatlyLauncher>`, so what they write matches
+ * `chatly csp --install react`, and `init astro` / `init express` paste the
+ * snippet, so theirs matches the bare `chatly csp`. The generated file prints
+ * its own refresh command for exactly this reason; it used to print
+ * `--format next` whatever the variant, which silently put the hashes back.
  */
 import { str, type ParsedArgs } from '../args.js';
-import { cspModule, pickChannel, type ChannelRow, type EmbedBlock } from '../init/shared.js';
+import {
+  cspModule,
+  hostsOnly,
+  pickChannel,
+  type ChannelRow,
+  type EmbedBlock,
+} from '../init/shared.js';
 import { printJson } from '../output.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
@@ -67,29 +82,6 @@ const DIRECTIVES: ReadonlyArray<readonly [keyof EmbedBlock['contentSecurityPolic
   ['imgSrc', 'img-src'],
   ['mediaSrc', 'media-src'],
 ];
-
-/**
- * A `'sha256-…'` source, which is a hash of the inline embed snippet.
- *
- * Matched on the PREFIX of the quoted token, not by looking for a host that
- * is not a host: `'nonce-…'` would be the other quoted hash-like source and
- * the API does not publish one, so a prefix test that names what it removes
- * is the honest shape. Everything else — `'self'`, `data:`, `blob:` and every
- * origin — is kept by both variants.
- */
-const isSnippetHash = (source: string): boolean => source.startsWith("'sha256-");
-
-/** The published policy with the inline-snippet hashes taken out. */
-function hostsOnly(
-  csp: EmbedBlock['contentSecurityPolicy'],
-): EmbedBlock['contentSecurityPolicy'] {
-  return {
-    scriptSrc: csp.scriptSrc.filter((s) => !isSnippetHash(s)),
-    connectSrc: csp.connectSrc.filter((s) => !isSnippetHash(s)),
-    imgSrc: csp.imgSrc.filter((s) => !isSnippetHash(s)),
-    mediaSrc: csp.mediaSrc.filter((s) => !isSnippetHash(s)),
-  };
-}
 
 export async function csp(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
   const format = (str(args.flags, 'format') ?? 'next') as Format;
@@ -137,10 +129,13 @@ export async function csp(chatly: ChatlyClient, args: ParsedArgs): Promise<numbe
     return 0;
   }
 
+  // The raw embed, not `policy`: `cspModule` filters from `install` itself —
+  // one filter, so the file `chatly init next` writes and this output cannot
+  // drift.
   process.stdout.write(
     cspModule({
       publicId: picked.publicId,
-      embed: { ...picked.embed, contentSecurityPolicy: policy },
+      embed: picked.embed,
       // Unused by `cspModule`; the identity choice belongs to `init`.
       identity: 'hmac',
       generatedOn: new Date().toISOString().slice(0, 10),

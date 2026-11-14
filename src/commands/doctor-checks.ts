@@ -109,22 +109,26 @@ export interface DoctorDeps {
    */
   readonly health: () => Promise<readonly unknown[]>;
   /**
-   * `GET /v1/channels/{id}/identity-contract`'s `checks` array (CH-09).
+   * `GET /v1/channels/{id}/identity-contract`'s response body (CH-09).
    *
    * Same reasoning as `health`: the derivation lives server-side in
    * `resolveOidcIssuers`, this package is published and that one is private,
    * so the verdict is READ rather than recomputed. The route exists to be
    * failed on by a CI step; this is that step.
-   *
    * Throws on a missing scope, a non-`web` channel, or a deployment without
-   * the route — all three report as SKIP, never as a pass.
+   * the route — all three report as SKIP, never as a pass. The WHOLE body,
+   * because `audience` and `issuers` are what a minted token is compared
+   * against (`doctor-token-audience.ts`); a second read for them would be a
+   * second source of truth for one channel's contract.
    */
-  readonly identityContract: (channelId: string) => Promise<readonly unknown[]>;
+  readonly identityContract: (channelId: string) => Promise<Record<string, unknown>>;
 }
 
 export interface DoctorOptions {
   /** `--origin`: the site the widget is installed on. */
   readonly origin?: string | undefined;
+  /** `--token`/`$CHATLY_VISITOR_TOKEN`: see `doctor-token-audience.ts` (CH-09). */
+  readonly visitorToken?: string | undefined;
 }
 
 /**
@@ -373,7 +377,7 @@ export async function runChecks(
     }
     out.push(await widgetAssetsCheck(ch, deps));
     out.push(allowedOriginsCheck(ch, opts));
-    out.push(...(await identityContractChecks(ch, deps)));
+    out.push(...(await identityContractChecks(ch, deps, opts)));
     const deprecated = strings(ch.embed['deprecatedFileOrigins']);
     if (deprecated.length > 0) {
       out.push({
