@@ -538,6 +538,9 @@ export const RESOURCES: ReadonlyArray<ResourceDef> = [
     // Is the source actually WORKING, which is not the same question as
     // whether it matches this file (CH-05). See `resource-conditionals.ts`.
     liveState: cond.docsSourceState,
+    // A tokenless Forumulate row is the handshake shape: a one-time human
+    // approval this CLI cannot perform, so it is reported and not sent.
+    blockedCreate: cond.docsSourceNeedsConnect,
     // The provider token is write-only; no DTO field carries it back.
     opaque: ['token'],
     secrets: [],

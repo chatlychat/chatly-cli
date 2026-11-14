@@ -218,6 +218,34 @@ export interface ResourceDef {
    */
   readonly requiredFields?: ReadonlyArray<string>;
   /**
+   * A row that cannot be CREATED by any write this CLI can send, because
+   * something outside the document has to happen first — the reason, or
+   * undefined for every row that is fine.
+   *
+   * One resource needs it (CH-10). A `docsSources` row declaring
+   * `provider: forumulate` and no `token` is the shape the customer asked
+   * for: the credential is obtained by an approved connection rather than
+   * pasted, and `POST /v1/docs-sources/connect/forumulate` needs a live
+   * Atlas SESSION token out of an operator's browser, which a CLI holding an
+   * API key does not have and cannot mint. So the write is impossible here —
+   * not refused, not drifted, impossible — and the only honest `apply` is one
+   * that writes nothing and says what the human has to do once.
+   *
+   * It is `blockedCreate` and not `requiredFields` or an `extraWarnings` line
+   * because both of those WARN and let `apply` send the body anyway: it would
+   * answer 400 (`token: Required`), which is a failure the operator cannot
+   * act on and which reads as a broken document rather than a pending
+   * approval. `blocked` is the existing action for "this CLI will not send
+   * it", it skips the row, and it exits non-zero — which is the point. A
+   * tokenless source must never be reported as applied while a person still
+   * has to click something.
+   *
+   * CREATE only. Once the approval has happened the live row exists, its
+   * credential is stored, and the document matches it — the next `plan` is a
+   * `noop` and the pipeline is green with no second rule.
+   */
+  readonly blockedCreate?: (body: Readonly<Record<string, unknown>>) => string | undefined;
+  /**
    * Rules only this resource has, checked against the live rows.
    *
    * A hook rather than more declarative fields on every def: the two rules

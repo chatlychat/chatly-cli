@@ -368,3 +368,55 @@ export function docsSourceState(
     failed: status === 'failed',
   };
 }
+
+/**
+ * A Forumulate source declared with no credential — CH-10.
+ *
+ * The customer's done-when is `provider: forumulate` with **no `token`
+ * field** in `chatly.yaml`, and that shape is now a real one: Chatly can get
+ * the credential itself through the partner-link handshake
+ * (`POST /v1/docs-sources/connect/forumulate`). What the handshake cannot do
+ * is happen inside `apply` — it mints an Atlas assertion from a live browser
+ * SESSION, and this CLI authenticates with an API key, so there is no session
+ * to mint from and no `connectUrl` this process could print. The approval is
+ * also a human clicking "approve" on another company's screen, which no exit
+ * code can stand in for.
+ *
+ * So the row is reported as awaiting that one approval, and `apply` writes
+ * nothing. The alternative shapes were both worse: sending the body answers
+ * `400 token: Required` (a failure the reader cannot act on), and warning
+ * while applying would report a success for a source that does not exist.
+ *
+ * The LABEL is in the message because it is this resource's natural key, so
+ * it is also the thing that makes the second `apply` converge: approve under
+ * a different name and the document's row stays a create for ever while an
+ * orphan sits beside it.
+ *
+ * `'forumulate'` is hardcoded here for the reason `unwritable` and
+ * `requiredFields` are: the CLI is a published package and cannot import the
+ * provider registry. A provider gaining a handshake would need a line here,
+ * and `GET /v1/docs-sources/providers` publishes `handshakeRoute` so a reader
+ * can check this list against the server rather than trusting it.
+ */
+export function docsSourceNeedsConnect(
+  body: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (body['provider'] !== 'forumulate') {
+    return undefined;
+  }
+  const token = body['token'];
+  if (typeof token === 'string' && token.length > 0) {
+    return undefined;
+  }
+  const label = typeof body['label'] === 'string' ? body['label'] : '';
+  return (
+    'a Forumulate source with no `token` is connected by an approved handshake, which needs a ' +
+    'person: nothing is written until an owner of the matching Forumulate organisation ' +
+    'approves it once. Do it in Chatly under Connect → Knowledge base, with the "Connect ' +
+    'without pasting a secret" button' +
+    (label === '' ? '' : `, naming it exactly \`${label}\` so this row matches it`) +
+    ', then run `apply` again and this row will be unchanged. To connect it from CI instead, ' +
+    'put a credential in `token` (`GET /v1/docs-sources/providers` lists the forms its ' +
+    '`tokenAccepts` takes).'
+  );
+}

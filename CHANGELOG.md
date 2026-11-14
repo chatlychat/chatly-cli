@@ -1,5 +1,33 @@
 # @chatlychat/cli — changelog
 
+## 0.15.0 — 2026-11-14
+
+- **A Forumulate docs source can be declared with no `token`** (CH-10). A
+  help centre on Forumulate was only connectable by pasting a credential into
+  a dialog, so a workspace managed as code could not express it at all — which
+  is why one has been sitting in `docs_sources` as a `website` source, crawled
+  on a 6-hourly poll instead of pushed by webhook. `provider: forumulate` with
+  no `token` is now a legal row, and no secret ever enters your repository or
+  your CI.
+
+  **It is tokenless, not human-free, and your first `apply` after adding the
+  row will go red.** `plan` reports the row as `blocked`, naming the label to
+  approve under; `apply` writes nothing; the command exits 1 while it is
+  pending. One operator does one approval in Chatly under Connect →
+  Knowledge base, with the "Connect without pasting a secret" button. After
+  that the row converges to `noop` and stays there — the pipeline is green
+  permanently, and nothing needs re-approving.
+
+  The handshake cannot run inside `apply`, and the reason is worth stating
+  because it is not a limitation we can lift: it mints an assertion from a
+  live browser session on the identity provider, and the CLI holds an API
+  key. There is no session to mint from. The two alternatives were a
+  `400 token: Required` you cannot act on from CI, or reporting success for a
+  source that does not exist — both worse than one visible approval.
+
+  To connect it from CI anyway, put a credential in `token`;
+  `GET /v1/docs-sources/providers` lists the forms its `tokenAccepts` takes.
+
 ## 0.14.0 — 2026-11-14
 
 - **`chatly.yaml` can set a brand's `fromEmail` and `replyTo`** (CH-21).

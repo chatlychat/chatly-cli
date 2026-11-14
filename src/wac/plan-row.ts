@@ -124,6 +124,16 @@ function planCreate(
       pathParams,
     );
   }
+  /*
+   * Before any field is described: a row whose create is IMPOSSIBLE from a
+   * CLI, as against merely wrong. See `ResourceDef.blockedCreate`. Placed
+   * ahead of the change list so the plan line carries the reason and nothing
+   * else — a row waiting on a human approval is not a diff to read.
+   */
+  const impossible = def.blockedCreate?.(row.body);
+  if (impossible !== undefined) {
+    return blocked(def, row, impossible, dependsOn, pathParams);
+  }
   const changes: FieldChange[] = Object.entries(row.body)
     .filter(([name]) => !def.opaque.includes(name))
     .map(([name, to]) => ({ name, to, route: undefined }));
