@@ -1,5 +1,31 @@
 # @chatlychat/cli — changelog
 
+## 0.15.1 — 2026-11-16
+
+- **`chatly doctor` can be a deploy gate on an HMAC install** (EmojiDex CH-1,
+  CH-9). An identity-contract check that answers `ok: null` — NOT DETERMINED —
+  now prints **SKIP** instead of FAIL. The server stopped grading
+  `issuer_resolved`, `audience_derived` and `audience_matches_channel` on a
+  channel that verifies a `userHash` and no token, and this is the half of
+  that fix that lives in the CLI: 0.15.0 graded anything that was not `true`
+  as a failure, so the new verdict would still have printed FAIL.
+
+  Both halves are needed. If your `doctor` still reports
+  `FAIL identity.issuer_resolved` beside
+  `SKIP identity.jwks_reachable`, one of the two is missing — the sibling
+  check already SKIPped with the same sentence, which is the tell.
+
+  `token_fields_ignored`, the new contract row that names a token-only field
+  left behind by an earlier OIDC mode, is **warn-only** here: a channel
+  carrying a `tokenProvider` nothing reads verifies its visitors perfectly
+  well. Worth saying, never worth stopping a deploy for.
+
+- **`doctor --help` says it runs BEFORE your first deploy.** Every check that
+  needs the site serving the widget is gated on `--origin`, so omitting it
+  reports those as SKIP and grades everything else. There is deliberately no
+  `--skip-live-checks`: leaving out `--origin` already is one. The `--json`
+  shape is documented there too (EmojiDex XP-5, XP-14).
+
 ## 0.15.0 — 2026-11-14
 
 - **A Forumulate docs source can be declared with no `token`** (CH-10). A

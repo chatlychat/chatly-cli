@@ -179,7 +179,13 @@ export async function healthChecks(
  * refuses every token and leaves the visitor anonymous, with nothing
  * server-side to see.
  */
-const CONTRACT_WARN_ONLY = new Set(['audience_derived']);
+/*
+ * `token_fields_ignored` is advice too, and for the same shape of reason: a
+ * channel in `hmac` mode carrying a `tokenProvider` nothing reads verifies
+ * its visitors perfectly well (EmojiDex CH-1, 2026-11-16). Worth saying,
+ * never worth stopping a deploy for.
+ */
+const CONTRACT_WARN_ONLY = new Set(['audience_derived', 'token_fields_ignored']);
 
 /**
  * The identity contract's own verdicts, for a channel that verifies visitors.
@@ -238,16 +244,34 @@ export async function identityContractChecks(
       : entries.map((entry): DoctorCheck => {
           const e = rec(entry);
           const id = text(e['id']) ?? 'unknown';
-          const ok = e['ok'] === true;
+          const raw = e['ok'];
+          const ok = raw === true;
+          /*
+           * `ok: null` is SKIP, exactly as it is for the integration-health
+           * rows above, and for the same reason — it means NOT DETERMINED.
+           * The three token checks answer it on a channel in `hmac` mode,
+           * which verifies no token (EmojiDex CH-1, 2026-11-16). Before this,
+           * anything that was not `true` was a failure, so a null would have
+           * read as the unclearable FAIL it replaces.
+           */
+          const verdict: DoctorCheck['verdict'] =
+            raw === null || raw === undefined
+              ? 'skip'
+              : ok
+                ? 'pass'
+                : CONTRACT_WARN_ONLY.has(id)
+                  ? 'warn'
+                  : 'fail';
           return {
             name: `identity.${id} (${ch.label})`,
-            verdict: ok ? 'pass' : CONTRACT_WARN_ONLY.has(id) ? 'warn' : 'fail',
+            verdict,
             // The server's own sentence: a second wording here is a second
             // source of truth about a verdict this CLI did not compute.
             detail: text(e['detail']) ?? (ok ? 'ok' : 'failed'),
-            fix: ok
-              ? null
-              : `Read the whole contract with \`chatly api GET /v1/channels/${channelId}/identity-contract\` — it carries the exact \`aud\`, issuer and claim names your token template must stamp.`,
+            fix:
+              verdict === 'pass' || verdict === 'skip'
+                ? null
+                : `Read the whole contract with \`chatly api GET /v1/channels/${channelId}/identity-contract\` — it carries the exact \`aud\`, issuer and claim names your token template must stamp.`,
           };
         });
   /*

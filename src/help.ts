@@ -230,11 +230,20 @@ INSTALL
                               Exits 1 if any check FAILED; warnings alone exit 0.
                               A check that could NOT be made prints SKIP and is counted
                               apart from the ones that passed; it is never an ok
+                              RUNS BEFORE YOUR FIRST DEPLOY: every check that needs the
+                              site serving the widget is gated on --origin, so omitting it
+                              reports those as SKIP and grades everything else. There is no
+                              --skip-live-checks because that is what leaving out --origin
+                              already does
                               --channel <publicId|id>  just this web channel
                               --origin <url>   the site it is installed on: asserts the
                                                origin is allowed, and is the Origin the
-                                               upload preflight carries
-                              --json           every verdict as JSON
+                                               upload preflight carries. Omit it before the
+                                               site exists
+                              --json           every verdict as JSON: {checks:[{name,
+                                               verdict,detail,fix}],ok}, one object per
+                                               check, for a deploy gate that reports many
+                                               platforms at once
   csp                         The widget's CSP sources for a web channel, so a build
                               step can regenerate them on every deploy instead of
                               hand-editing what init wrote once
