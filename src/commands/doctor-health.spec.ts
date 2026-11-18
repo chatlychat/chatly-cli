@@ -72,7 +72,47 @@ describe('the checks the server computes (integration-health)', () => {
     expect(exitCodeFor(all)).toBe(1);
   });
 
-  it('warns rather than failing on business hours, which is a supported configuration', async () => {
+  /**
+   * `business_hours.set` is graded like every other row now — 0.15.2.
+   *
+   * It used to be warn-only on `ok: false`, through a `HEALTH_WARN_ONLY` set
+   * in `doctor-readiness.ts`, because the API answered `ok: false` for a
+   * workspace that had simply never set hours: a brand-new workspace reads
+   * `notNull().default(false)` there, so the warning was permanent and
+   * unclearable, and failing a deploy on it would have made this gate
+   * something teams switch off.
+   *
+   * The API fixed the grading instead (2026-11-18): hours-off answers
+   * `ok: true` with `fix: null`. The only `ok: false` left is hours ENABLED
+   * with zero open days — the widget then tells every visitor the workspace
+   * is never open — so the exception could only ever soften a real breakage.
+   *
+   * Both halves are asserted here, because the two together are the whole
+   * change: the supported setup must not cost an exit code, and the broken
+   * one must.
+   */
+  it('passes hours-off, because the server now grades that ok: true', async () => {
+    const { check: c, all } = await check(
+      'business_hours.set',
+      [channelRow()],
+      HEALTHY,
+      {},
+      {
+        health: async () => [
+          {
+            id: 'business_hours.set',
+            ok: true,
+            detail: 'Business hours are off, so the widget shows the same availability.',
+            fix: null,
+          },
+        ],
+      },
+    );
+    expect(c.verdict).toBe('pass');
+    expect(exitCodeFor(all)).toBe(0);
+  });
+
+  it('FAILS business hours that are on with no open day, which is a real breakage', async () => {
     const { check: c, all } = await check(
       'business_hours.set',
       [channelRow()],
@@ -83,15 +123,15 @@ describe('the checks the server computes (integration-health)', () => {
           {
             id: 'business_hours.set',
             ok: false,
-            detail: 'No business hours are set.',
-            fix: 'Set them.',
+            detail: 'Business hours are ON with no day configured, so the workspace is never open.',
+            fix: 'Add at least one open day, or turn business hours off.',
           },
         ],
       },
     );
-    expect(c.verdict).toBe('warn');
-    // A warning alone must not stop a deploy, or the gate gets switched off.
-    expect(exitCodeFor(all)).toBe(0);
+    expect(c.verdict).toBe('fail');
+    // The point of removing the exception: this stops a deploy now.
+    expect(exitCodeFor(all)).toBe(1);
   });
 
   it('reports the server’s own verdict, because the key set is resolved there', async () => {

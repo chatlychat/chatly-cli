@@ -1,5 +1,67 @@
 # @chatlychat/cli — changelog
 
+## 0.16.0 — 2026-11-18
+
+- **`chatly sources` — every knowledge source in one list** (CH1). An
+  integrator provisioned a workspace, which created a `kb-ingest` website
+  crawl, and found no command that could see it. Half of that report is
+  refuted: `chatly docs-sources` has covered list, create, update, sync and
+  delete for releases. The half that was real is worse than the
+  report said — a knowledge source lives in one of TWO tables, and nothing in
+  this CLI had ever called the route that serves the second:
+
+  | Where it lives      | What creates it                                                | Served by               |
+  | ------------------- | -------------------------------------------------------------- | ----------------------- |
+  | `docs_sources`      | `POST /v1/docs-sources`                                        | `/v1/docs-sources`      |
+  | `kb_ingest_sources` | platform provisioning, `POST /v1/kb-ingest/sources/url`, a PDF | `/v1/kb-ingest/sources` |
+
+  `GET /v1/docs-sources` lists the first table only — its own description says
+  so — so `chatly docs-sources list` answered `(no results)` for a workspace
+  whose one source was a provisioned crawl, and `PATCH`/`DELETE
+/v1/docs-sources/{id}` answered 404 for its id. Nothing was broken; the
+  command was looking in the wrong table and had no way to say so.
+
+  So `sources` is not a second spelling of `docs-sources`. `sources list` is
+  `GET /v1/kb-ingest/sources?include=all`, the merged list the API already
+  offers as the answer to "what is in my knowledge base and did it work", with
+  a `kind` column that tells a crawl from a provider. `sources get <id>` reads
+  the one route that resolves either kind. `sources sync <id>` is dispatched
+  on that kind — a provider to `POST /v1/docs-sources/{id}/sync` (`--full`
+  drops the incremental watermark), a crawl or PDF to
+  `POST /v1/kb-ingest/sources/{id}/ingest`. `sources update` and
+  `sources delete` (`--articles keep|archive|delete`) go to
+  `/v1/docs-sources/{id}`.
+
+  **`update` and `delete` on a crawl are refused rather than attempted, and
+  the refusal says why.** `PATCH` and `DELETE /v1/kb-ingest/sources/{id}`
+  carry no API-key access at all, so they answer 403 to every credential this
+  CLI can hold; sending one would have earned the generic "the key lacks a
+  scope" advice and sent you hunting for a scope that does not exist. Editing
+  or removing a crawl is a dashboard act today. `sources sync` on one works.
+
+  `chatly docs-sources` is unchanged, and stays the provider-shaped surface:
+  `providers`, `discover`, `create`, `subscribe`.
+
+- **`chatly doctor` fails `business_hours.set` again, and that is the fix.**
+  This CLI graded that one check as a warning even when the server said
+  `ok: false`, through a `HEALTH_WARN_ONLY` exception. The reason was good:
+  `business_hours_enabled` defaults to false and the bootstrap writes no
+  hours, so every brand-new workspace answered `ok: false` — a permanent
+  warning nobody could clear by doing the right thing, and failing a deploy
+  on it would have made the gate something teams switch off.
+
+  The API fixed the grading instead (2026-11-18): hours-off now answers
+  `ok: true` with `fix: null` and a sentence naming it as a supported setup.
+  The only `ok: false` left for that check is business hours **enabled with
+  zero open days**, which makes the widget tell every visitor the workspace is
+  never open. The exception had stopped protecting a supported configuration
+  and could only ever soften a real breakage, so it is gone: every
+  integration-health row is now reported exactly as the server graded it.
+
+  **Both halves are needed.** If `doctor` warns where it should fail, this
+  release is missing; if it fails on a workspace that has deliberately set no
+  hours, the API is older than 2026-11-18.
+
 ## 0.15.1 — 2026-11-16
 
 - **`chatly doctor` can be a deploy gate on an HMAC install** (EmojiDex CH-1,

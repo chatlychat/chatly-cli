@@ -87,6 +87,17 @@ KNOWLEDGE + SEARCH
   kb articles                 Help-centre articles
   kb article <slug>
   kb collections
+  sources list                Every knowledge source and whether its last run worked:
+                              URL crawls, ingested PDFs and documentation providers in
+                              ONE list. 'docs-sources list' shows providers only, so a
+                              crawl created by platform provisioning is invisible there
+  sources get <id>            One, either kind, with its last run's skipped-page report
+  sources sync <id>           Re-read it now. --full drops the incremental watermark
+                              first (documentation providers only)
+  sources update <id>         --file <path> | --body '{…}'   providers only
+  sources delete <id>         Disconnect it. --articles keep|archive|delete, default
+                              keep. Providers only — a crawl's PATCH and DELETE take a
+                              signed-in session, never an API key
 
 EVENTS
   events track <contact-id> <name>

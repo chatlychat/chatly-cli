@@ -29,6 +29,7 @@ import * as listenCmd from './commands/listen.js';
 import * as pac from './commands/platform-as-code.js';
 import * as cmd from './commands/resources.js';
 import * as secretCmd from './commands/secret.js';
+import * as sourcesCmd from './commands/sources.js';
 import { isStaff, resolveStaffToken } from './commands/staff-login.js';
 import * as wac from './commands/workspace-as-code.js';
 import { readConfig, resolveCredentials } from './config.js';
@@ -43,7 +44,7 @@ import { HELP } from './help.js';
  * drifts — it said `0.1.0` while the published package was `0.1.2` — so
  * `cli.spec.ts` asserts the two agree and fails if they do not.
  */
-const VERSION = '0.15.1';
+const VERSION = '0.16.0';
 
 /** Commands that need no credential. Everything else resolves a key first. */
 const UNAUTHENTICATED = new Set(['login', 'logout', 'help', 'version', 'secret']);
@@ -118,6 +119,15 @@ export const COMMANDS: Readonly<
   listen: listenCmd.listen,
   'customer-cards': integrations.customerCards,
   'docs-sources': integrations.docsSources,
+  /*
+   * `sources` is not a second spelling of `docs-sources` (CH1). A knowledge
+   * source lives in `docs_sources` OR `kb_ingest_sources`, served by two
+   * route families, and `GET /v1/docs-sources` lists the first only — so a
+   * workspace whose one source was a PROVISIONED CRAWL had no CLI command
+   * that could see it. This group is the merged list plus the reads and
+   * writes dispatched by `kind`. Read `commands/sources.ts`'s header.
+   */
+  sources: sourcesCmd.sources,
   channels: integrations.channels,
   /*
    * The data-rights executor (CHT-X03). Beside `webhooks` rather than under
@@ -199,6 +209,7 @@ export const ALIASES: Readonly<Record<string, string>> = {
   'email-template': 'email-templates',
   'customer-card': 'customer-cards',
   'docs-source': 'docs-sources',
+  source: 'sources',
   'knowledge-gap': 'knowledge-gaps',
   eval: 'evals',
 };

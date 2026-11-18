@@ -91,7 +91,7 @@ export const unavailable = (why: string): DoctorCheck => ({
  * (see `DoctorDeps.health`): the resolution lives in a private package this
  * published one cannot import.
  *
- * ── The three-way mapping, and the one exception ──────────────────────────
+ * ── The three-way mapping, with no exceptions ─────────────────────────────
  *
  *   ok: true   → pass
  *   ok: false  → fail, so the gate stops the deploy
@@ -101,20 +101,34 @@ export const unavailable = (why: string): DoctorCheck => ({
  *                was reported for; grading it `fail` would turn "we did not
  *                look" into "it is broken".
  *
- * The exception is `business_hours.set`, which is a warning even when false:
- * a workspace that deliberately runs without published hours is a supported
- * configuration, and failing a deploy on it would make this gate something
- * people switch off. That is the one judgement this file adds to the
- * server's; everything else is reported as the server graded it.
- *
  * An `ok` the server did not send at all lands in the `skip` arm too, for the
  * same reason: an unreadable verdict is not a pass.
  *
- * `read` is the function rather than the whole `DoctorDeps`, which keeps this
- * file's only import type-only — the property `doctor-checks.ts`'s header
- * depends on for its own isolation.
+ * ── There WAS one exception, and the API outgrew it ───────────────────────
+ *
+ * `business_hours.set` was graded `warn` even on `ok: false`, through a
+ * `HEALTH_WARN_ONLY` set. The reason was good at the time:
+ * `business_hours_enabled` is `notNull().default(false)` and the bootstrap
+ * writes no hours, so EVERY brand-new workspace answered `ok: false` on this
+ * one check — a permanent warning nobody could clear by doing the right
+ * thing, and failing a deploy on it would have made this gate something
+ * teams switch off.
+ *
+ * The API fixed the grading instead (2026-11-18): hours-off now answers
+ * `ok: true` with `fix: null` and a `detail` that names it as a supported
+ * setup, because `false` means WRONG and hours-off is not wrong — see
+ * `businessHoursCheck` in `integration-health-checks.ts`, which asked for
+ * this removal by name. The ONE remaining `ok: false` for that check is
+ * business hours ENABLED with zero open days, which makes the widget tell
+ * every visitor the workspace is never open. So the exception had stopped
+ * protecting a supported configuration and could only ever soften a real
+ * breakage, which is the opposite of what it was written for.
+ *
+ * Nothing in this file adds a judgement to the server's now: every
+ * integration-health row is reported exactly as it was graded. The only
+ * warn-only list left is `CONTRACT_WARN_ONLY` below, and it covers a
+ * different route.
  */
-const HEALTH_WARN_ONLY: ReadonlySet<string> = new Set(['business_hours.set']);
 
 export async function healthChecks(
   read: () => Promise<readonly unknown[]>,
@@ -155,8 +169,7 @@ export async function healthChecks(
     const ok = c['ok'];
     return {
       name: id,
-      verdict:
-        ok === true ? 'pass' : ok === false ? (HEALTH_WARN_ONLY.has(id) ? 'warn' : 'fail') : 'skip',
+      verdict: ok === true ? 'pass' : ok === false ? 'fail' : 'skip',
       detail:
         text(c['detail']) ??
         (ok === true ? 'No detail.' : 'The server reported no verdict and no reason.'),
