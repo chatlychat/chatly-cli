@@ -159,22 +159,48 @@ describe('chatly sources', () => {
   });
 
   /*
-   * `PATCH`/`DELETE /v1/kb-ingest/sources/{id}` carry no `@AllowApiKey()`, so
-   * they answer 403 to every credential this CLI can hold. Refused here with
-   * a sentence that names the reason, rather than sent to earn `explain()`'s
-   * generic "the key lacks a scope" advice for a scope that does not exist.
+   * Both routes opened to keys on 2026-11-19, so these two now DISPATCH on
+   * `kind` instead of refusing. The assertion is on the route the write went
+   * to, not on a canned response: a fixture that echoes agrees with a write
+   * sent to the wrong table, which is this repo's house failure mode.
    */
-  it.each([['update'], ['delete']])('refuses to %s a crawl, and sends no write', async (verb) => {
+  it('patches a crawl through the kb-ingest route', async () => {
     const sent: Sent[] = [];
-    const argv =
-      verb === 'update'
-        ? ['sources', 'update', 's_1', '--body', '{"label":"x"}', '--key', 'ck_t']
-        : ['sources', 'delete', 's_1', '--key', 'ck_t'];
-    const code = await run(argv, factoryFor([CRAWL], sent));
+    const code = await run(
+      ['sources', 'update', 's_1', '--body', '{"label":"x"}', '--key', 'ck_t'],
+      factoryFor([CRAWL, { id: 's_1', label: 'x' }], sent),
+    );
+    expect(code).toBe(0);
+    // Control: make `writeRoute` always return the docs-sources path and this
+    // reads `/v1/docs-sources/s_1`.
+    expect(sent[1]).toMatchObject({ method: 'PATCH', path: '/v1/kb-ingest/sources/s_1' });
+  });
+
+  it('deletes a crawl through the kb-ingest route', async () => {
+    const sent: Sent[] = [];
+    const code = await run(
+      ['sources', 'delete', 's_1', '--key', 'ck_t'],
+      factoryFor([CRAWL, { deleted: true }], sent),
+    );
+    expect(code).toBe(0);
+    expect(sent[1]).toMatchObject({ method: 'DELETE', path: '/v1/kb-ingest/sources/s_1' });
+    // No `?articles` on this route — it keeps its articles unconditionally.
+    expect(sent[1]?.search ?? '').not.toContain('articles');
+  });
+
+  it('refuses --articles on a crawl rather than dropping it', async () => {
+    /*
+     * The route has no such option, so sending it would be accepted and
+     * ignored — and the caller would believe they had archived the articles.
+     */
+    const sent: Sent[] = [];
+    const code = await run(
+      ['sources', 'delete', 's_1', '--articles', 'delete', '--key', 'ck_t'],
+      factoryFor([CRAWL], sent),
+    );
     expect(code).toBe(2);
-    expect(err.join('')).toContain('never an API key');
-    // The GET that identified it, and nothing else.
-    expect(sent.map((s) => s.method)).toEqual(['GET']);
+    expect(err.join('')).toContain('always keeps its');
+    expect(sent.map((x) => x.method)).toEqual(['GET']);
   });
 
   it('refuses to guess the id, before any request', async () => {

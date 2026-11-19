@@ -37,8 +37,11 @@
  * naming the resource instead of a 404 from whichever route was guessed.
  *
  * Verified against the handlers rather than any doc: `kb-ingest.controller.ts`
- * carries `@AllowApiKey()` on `GET sources`, `GET sources/:id` and
- * `POST sources/:id/ingest`, and on NOTHING else — see `crawlWritesRefused`.
+ * carries `@AllowApiKey()` on `GET sources`, `GET sources/:id`,
+ * `POST sources/:id/ingest` and — since 2026-11-19 — `PATCH sources/:id` and
+ * `DELETE sources/:id`. The two creates (`sources/url`, `sources/pdf`) stay
+ * closed to keys, so this group has no `create`: a crawl is created by
+ * `POST /v1/platform/provision` or the dashboard.
  */
 import { bool, type ParsedArgs } from '../args.js';
 import { bodyFrom, need, queryFrom, showObject, showRows } from './common.js';
@@ -89,28 +92,31 @@ async function rowFor(chatly: ChatlyClient, id: string): Promise<{ kind: string;
   return { kind: typeof row.kind === 'string' ? row.kind : 'unknown', row };
 }
 
-/**
- * Why a crawl's edit and delete are refused HERE rather than attempted.
+/*
+ * Both kinds are writable now, and this group dispatches on `kind`.
  *
- * `PATCH /v1/kb-ingest/sources/{id}` and `DELETE /v1/kb-ingest/sources/{id}`
- * carry no `@AllowApiKey()`, so they answer 403 to every credential this CLI
- * can hold. Sending one anyway would earn `explain()`'s generic "the key is
- * valid but lacks a scope for this route" advice, which sends the reader to
- * `chatly whoami` to hunt for a scope that does not exist.
+ * Until 2026-11-19 `PATCH`/`DELETE /v1/kb-ingest/sources/{id}` carried no
+ * `@AllowApiKey()`, so this file REFUSED a crawl write locally and explained
+ * that no CLI command could drive it. That refusal was a copy of a
+ * server-side decision, and the decision changed the day after it was
+ * written — exactly the staleness its own comment warned about. Two
+ * integrators had reported the closure; one of them had used the PLATFORM
+ * key to clean up its own workspace.
  *
- * This is a copy of a server-side decision and therefore stale-able: if
- * either route opens to API keys, delete this and dispatch them the way
- * `sync` already dispatches a crawl.
+ * The two tables take different write shapes, which is why this dispatches
+ * rather than sharing one path: a provider source's delete takes
+ * `?articles=keep|archive|delete`, and a crawl's keeps its articles
+ * unconditionally (the route says so in its summary), so passing the flag
+ * there would imply a choice the server does not offer.
  */
-function crawlWritesRefused(kind: string, verb: string): number {
-  process.stderr.write(
-    `That source is a ${kind}, and \`sources ${verb}\` can only ${verb} a documentation\n` +
-      'provider. A crawl or a PDF is edited through the dashboard: ' +
-      `${verb === 'delete' ? 'DELETE' : 'PATCH'} /v1/kb-ingest/sources/{id}\n` +
-      'accepts a signed-in session only, never an API key, so no CLI command can drive it.\n' +
-      '`chatly sources sync <id>` DOES work on a crawl.\n',
-  );
-  return 2;
+const ROUTE_FOR = {
+  docs_provider: '/v1/docs-sources',
+  crawl: '/v1/kb-ingest/sources',
+} as const;
+
+/** Which collection owns this source's writes. */
+function writeRoute(kind: string): string {
+  return kind === 'docs_provider' ? ROUTE_FOR.docs_provider : ROUTE_FOR.crawl;
 }
 
 export async function sources(chatly: ChatlyClient, args: ParsedArgs): Promise<number> {
@@ -160,18 +166,29 @@ export async function sources(chatly: ChatlyClient, args: ParsedArgs): Promise<n
       const id = need(args, 2, 'a source id');
       const body = bodyFrom(args, 'the fields to change');
       const { kind } = await rowFor(chatly, id);
-      if (kind !== 'docs_provider') {
-        return crawlWritesRefused(kind, 'update');
-      }
       return showObject(
-        await chatly.request('PATCH', `/v1/docs-sources/${encodeURIComponent(id)}`, { body }),
+        await chatly.request('PATCH', `${writeRoute(kind)}/${encodeURIComponent(id)}`, { body }),
       );
     }
     case 'delete': {
       const id = need(args, 2, 'a source id');
       const { kind } = await rowFor(chatly, id);
       if (kind !== 'docs_provider') {
-        return crawlWritesRefused(kind, 'delete');
+        /*
+         * No `?articles`: this route keeps the articles it created, full
+         * stop. Accepting the flag and dropping it would be the
+         * accepted-and-ignored shape this repo keeps finding.
+         */
+        if (args.flags['articles'] !== undefined) {
+          process.stderr.write(
+            `--articles is a documentation-provider option; a ${kind} always keeps its\n` +
+              'articles. Re-run without it, or delete the articles from the dashboard.\n',
+          );
+          return 2;
+        }
+        return showObject(
+          await chatly.request('DELETE', `${ROUTE_FOR.crawl}/${encodeURIComponent(id)}`),
+        );
       }
       /*
        * `--articles` passed through rather than validated here: the server's

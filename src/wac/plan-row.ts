@@ -139,7 +139,16 @@ function planCreate(
     .map(([name, to]) => ({ name, to, route: undefined }));
   const extra = [...notes];
   for (const field of def.opaque) {
-    if (row.body[field] !== undefined) {
+    const value = row.body[field];
+    /*
+     * An EMPTY opaque field earns no note. `''` is what a public `website`
+     * docs source carries for `token` — the field is accepted and ignored
+     * there, and three yamls in the wild carry `token: ''` with a comment
+     * explaining the workaround — so "sent on this create and never readable
+     * afterwards" described a credential nobody has as though one were being
+     * entrusted to us. The reader then goes looking for where it is stored.
+     */
+    if (value !== undefined && value !== '' && value !== null) {
       extra.push(`${field} is write-only: sent on this create and never readable afterwards.`);
     }
   }

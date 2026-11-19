@@ -1,5 +1,23 @@
 # @chatlychat/cli — changelog
 
+## 0.17.0 — 2026-11-19
+
+- **`chatly sources update|delete` work on crawl sources** (snapnedit CHT-B2).
+  They refused locally, copying a server-side 403 — and the comment beside
+  that refusal warned the copy would go stale if the routes ever opened. They
+  opened the next day. The command dispatches on the source's `kind` now:
+  `docs_provider` to `/v1/docs-sources`, `crawl` to `/v1/kb-ingest/sources`.
+
+  `delete --articles` on a CRAWL source refuses with exit 2 rather than being
+  silently dropped: that route keeps its articles unconditionally, so
+  accepting the flag would promise a deletion that does not happen.
+
+- **`chatly plan` no longer calls an EMPTY opaque field write-only**
+  (snapnedit CHT-I4). It printed "token is write-only: sent on this create and
+  never readable afterwards" for `token: ''`, describing a credential nobody
+  has as though one were being entrusted to us. Three yamls in the wild carry
+  an empty token because `provider: website` used to require one.
+
 ## 0.16.0 — 2026-11-18
 
 - **`chatly sources` — every knowledge source in one list** (CH1). An
