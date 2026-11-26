@@ -1,5 +1,20 @@
 # @chatlychat/cli — changelog
 
+## 0.18.1 — 2026-11-25
+
+- **`doctor --token-url` named an option that does not exist.** When the route
+  answered an object with no usable `token`, the message said the shape was
+  "the same shape the widget reads for `visitor.tokenUrl`". There is no
+  `visitor.tokenUrl` in any Chatly package. The option is
+  `@chatlychat/widget-element`'s **`identityEndpoint`** (`identity-endpoint` as
+  an element attribute), which already took `{ identity }` and now also accepts
+  `{ token }`.
+
+  `tokenUrl` was the integration report's own template wording and I carried it
+  into shipped output. A documented option that does not exist is how an
+  integrator spends an afternoon looking for it, which is the exact defect
+  class 0.18.0 was released to help find.
+
 ## 0.18.0 — 2026-11-25
 
 - **`chatly doctor --token-url <url> [--cookie <file>]`** mints a visitor token

@@ -6,7 +6,7 @@
  *
  * `--token <jwt>` checks a token somebody pasted. That proves the token is
  * right; it does not prove the ROUTE that produces it is. A server-minted
- * setup — `visitor={{ tokenUrl }}` on the widget, or Forumulate's
+ * setup — `identityEndpoint` on the widget element, or Forumulate's
  * `identityEndpoint` — has one more thing that can be wrong than a pasted
  * token has: the route itself, its cookie handling, its response shape. Those
  * are the failures an integrator hits in production and cannot reproduce from
@@ -207,8 +207,10 @@ export async function fetchVisitorToken(
       kind: 'error',
       detail:
         `${url} answered an object with no usable \`token\` (keys: ${keys.join(', ') || 'none'}). ` +
-        'The contract is {"token": "<jwt>"} — the same shape the widget reads for ' +
-        '`visitor.tokenUrl` and Forumulate reads for `identityEndpoint`.',
+        'The contract is {"token": "<jwt>"} — the same shape ' +
+        "`@chatlychat/widget-element`'s `identityEndpoint` reads (as " +
+        "`identity-endpoint` on the element, or Forumulate's own setting of " +
+        'the same name).',
     };
   }
   return { kind: 'token', token };

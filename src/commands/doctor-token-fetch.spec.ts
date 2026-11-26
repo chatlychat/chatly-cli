@@ -168,4 +168,28 @@ describe('fetchVisitorToken', () => {
     });
     expect(out.kind === 'error' && out.detail).toContain('ECONNREFUSED');
   });
+
+  /*
+   * 0.18.0 shipped this message naming `visitor.tokenUrl`, an option that
+   * exists in no Chatly package — it was the integration report's own template
+   * wording, carried into released output. The real option is
+   * `@chatlychat/widget-element`'s `identityEndpoint`.
+   *
+   * Pinned in BOTH directions deliberately. Asserting only that the right name
+   * is present would pass with the wrong one still beside it, which is how a
+   * message ends up naming two options and sending half its readers to the one
+   * that does not exist.
+   */
+  it('names identityEndpoint, and never a tokenUrl, when the body has no token', async () => {
+    const out = await fetchVisitorToken(url, undefined, {
+      fetch: answering(200, { jwt: 'wrong-key' }),
+    });
+    expect(out.kind).toBe('error');
+    const detail = out.kind === 'error' ? out.detail : '';
+    expect(detail).toContain('no usable `token`');
+    // The keys it DID get, so the caller can see their own spelling.
+    expect(detail).toContain('jwt');
+    expect(detail).toContain('identityEndpoint');
+    expect(detail).not.toContain('tokenUrl');
+  });
 });
