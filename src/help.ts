@@ -251,6 +251,22 @@ INSTALL
                                                origin is allowed, and is the Origin the
                                                upload preflight carries. Omit it before the
                                                site exists
+                              --token <jwt>    one real minted visitor token, checked
+                                               against each channel's identity contract.
+                                               Or $CHATLY_VISITOR_TOKEN. Never sent anywhere
+                              --token-url <url> mint one through YOUR OWN route instead,
+                                               the way a server-minted install does. Proves
+                                               the route as well as the token: its cookie
+                                               handling, its response shape, and that it
+                                               answers 401 for a signed-out visitor rather
+                                               than redirecting to a sign-in page. https
+                                               only, or http to localhost — this request
+                                               carries your session cookie
+                              --cookie <file>  the session to send with --token-url. A
+                                               Netscape cookie jar, or a file holding a
+                                               literal Cookie header. Without it the route
+                                               is checked as a signed-OUT visitor, which is
+                                               a useful check of its own
                               --json           every verdict as JSON: {checks:[{name,
                                                verdict,detail,fix}],ok}, one object per
                                                check, for a deploy gate that reports many

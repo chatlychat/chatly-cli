@@ -16,6 +16,7 @@ import { atlasReceiverChecks } from './doctor-atlas-receiver.js';
 import { exitCodeFor, runChecks, selectChannels, type DoctorCheck } from './doctor-checks.js';
 import { readinessChecks, unavailable } from './doctor-readiness.js';
 import { VISITOR_TOKEN_ENV } from './doctor-token-audience.js';
+import { fetchVisitorToken } from './doctor-token-fetch.js';
 
 import type { ChatlyClient } from '@chatlychat/sdk-node';
 
@@ -56,7 +57,51 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
    * compared with each channel's identity contract and is never sent
    * anywhere: see `doctor-token-audience.ts`.
    */
-  const visitorToken = str(args.flags, 'token') ?? process.env[VISITOR_TOKEN_ENV];
+  let visitorToken = str(args.flags, 'token') ?? process.env[VISITOR_TOKEN_ENV];
+  /*
+   * CHT-L11.2: mint one through the integrator's OWN route instead.
+   *
+   * `--token <jwt>` proves a token is right; it does not prove the route that
+   * produces it is — and a server-minted setup has the route, its cookie
+   * handling and its response shape as three more things that can be wrong.
+   * Those are the failures an integrator hits in production and cannot
+   * reproduce from a pasted JWT.
+   *
+   * The outcome is a ROW either way, never a thrown error: "your route says
+   * nobody is signed in" is a valid answer and a useful one, and the identity
+   * checks below then skip for the honest reason rather than appearing to
+   * pass.
+   */
+  const tokenUrl = str(args.flags, 'token-url');
+  /*
+   * The row is held rather than pushed: `checks` is the result of `runChecks`
+   * below, and this has to run BEFORE it so the identity rows see the minted
+   * token.
+   */
+  let tokenRouteRow: DoctorCheck | null = null;
+  if (tokenUrl !== undefined) {
+    const fetched = await fetchVisitorToken(tokenUrl, str(args.flags, 'cookie'));
+    if (fetched.kind === 'token') {
+      visitorToken = fetched.token;
+      tokenRouteRow = {
+        name: 'identity token route',
+        verdict: 'pass',
+        detail: `${tokenUrl} minted a token. The identity rows below check THAT token.`,
+        fix: null,
+      };
+    } else {
+      tokenRouteRow = {
+        name: 'identity token route',
+        verdict: fetched.kind === 'anonymous' ? 'warn' : 'fail',
+        detail: fetched.detail,
+        fix:
+          fetched.kind === 'anonymous'
+            ? 'Nothing, if a signed-out visitor is what you were testing.'
+            : 'Fix the route, then run this again — the identity rows below are checking ' +
+              'whatever token was available instead.',
+      };
+    }
+  }
 
   /*
    * No `?limit=`, so this answers a bare array — but `itemsOf` accepts the
@@ -118,6 +163,11 @@ export async function doctor(chatly: ChatlyClient, args: ParsedArgs): Promise<nu
         ),
     },
   );
+
+  if (tokenRouteRow !== null) {
+    // First, so it reads before the rows that depend on it.
+    checks.unshift(tokenRouteRow);
+  }
 
   // Advisory: an older deployment without the route must not break the rest of doctor.
   try {

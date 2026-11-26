@@ -1,5 +1,29 @@
 # @chatlychat/cli — changelog
 
+## 0.18.0 — 2026-11-25
+
+- **`chatly doctor --token-url <url> [--cookie <file>]`** mints a visitor token
+  through your OWN route and runs the identity checks on it (LinkHub CHT-L11).
+  `--token <jwt>` proves a token is right and says nothing about the route that
+  produces it — and a server-minted install (`visitor={{ tokenUrl }}`, or a
+  Forumulate `identityEndpoint`) has the route, its cookie handling and its
+  response shape as three more things that can be wrong. Those are the ones
+  that fail in production and cannot be reproduced from a pasted JWT.
+
+  `--cookie` takes a Netscape cookie jar or a file holding a literal `Cookie:`
+  header. Leave it out and the route is checked as a **signed-out** visitor,
+  which is a useful check of its own.
+
+  **https only, or plain http to a loopback host** — this request carries your
+  session cookie, so anything else is refused before the request is made.
+  Checked on the parsed hostname, because `localhost.attacker.com` is not
+  loopback.
+
+  A redirect is reported rather than followed: a route that sends a signed-out
+  visitor to a sign-in page returns an HTML form, which parses as "no token"
+  and reads as the route being broken. Answer `401`, which is also what the
+  widget needs — it treats 401 as anonymous and clears any stored identity.
+
 ## 0.17.0 — 2026-11-19
 
 - **`chatly sources update|delete` work on crawl sources** (snapnedit CHT-B2).
